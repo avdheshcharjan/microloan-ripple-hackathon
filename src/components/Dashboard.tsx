@@ -38,6 +38,7 @@ interface DashboardProps {
   onTransactionUpdate?: () => void;
   hasRLUSDTrustLine: boolean;
   onTrustLineCreated: () => void;
+  userRole?: 'borrower' | 'lender';
 }
 
 export const Dashboard: React.FC<DashboardProps> = ({ 
@@ -49,7 +50,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
   showWalletDetails = false,
   onTransactionUpdate,
   hasRLUSDTrustLine,
-  onTrustLineCreated 
+  onTrustLineCreated,
+  userRole = 'borrower'
 }) => {
   const [didData, setDidData] = useState({ fullName: '', phone: '' });
   const [isCreatingDID, setIsCreatingDID] = useState(false);
@@ -408,14 +410,22 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
         <Card className="border-l-4 border-l-purple-500">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600">Portfolio Return</CardTitle>
-            <TrendingUp className="w-4 h-4 text-purple-600" />
+            <CardTitle className="text-sm font-medium text-gray-600">
+              {userRole === 'lender' ? 'Portfolio Return' : 'Completed Loans'}
+            </CardTitle>
+            {userRole === 'lender' ? (
+              <TrendingUp className="w-4 h-4 text-purple-600" />
+            ) : (
+              <Users className="w-4 h-4 text-purple-600" />
+            )}
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-purple-700">
-              {userStats.portfolioReturn}%
+              {userRole === 'lender' ? `${userStats.portfolioReturn}%` : userStats.completedLoans}
             </div>
-            <p className="text-xs text-gray-500 mt-1">Annual Return</p>
+            <p className="text-xs text-gray-500 mt-1">
+              {userRole === 'lender' ? 'Annual Return' : 'Successfully Repaid'}
+            </p>
           </CardContent>
         </Card>
       </div>

@@ -10,6 +10,7 @@ import { XRPL_EXPLORER_URL } from '@/utils/constants';
 
 const Index = () => {
   const [userWallet, setUserWallet] = useState<XRPLWallet | null>(null);
+  const [userRole, setUserRole] = useState<'borrower' | 'lender'>('borrower');
   const [showWalletSuccessPopup, setShowWalletSuccessPopup] = useState(false);
   const [didTransactionHash, setDidTransactionHash] = useState('');
   const [loans, setLoans] = useState<any[]>([]);
@@ -219,12 +220,18 @@ const Index = () => {
     }, 2000);
   };
 
+  const handleRoleChange = (role: 'borrower' | 'lender') => {
+    setUserRole(role);
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-green-50">
       <Header 
         hasWallet={!!userWallet}
         didTransactionHash={didTransactionHash}
         walletAddress={userWallet?.address || ''}
+        userRole={userRole}
+        onRoleChange={handleRoleChange}
         onLogout={handleLogout}
       />
       
@@ -240,6 +247,7 @@ const Index = () => {
           userStats={userStats}
           recentActivity={recentActivity}
           hasWallet={!!userWallet}
+          userRole={userRole}
           onCreateLoan={handleCreateLoan}
           onFundLoan={handleFundLoan}
           userWallet={userWallet}
