@@ -7,6 +7,8 @@ export interface XRPLWallet {
   address: string;
   seed: string;
   balance: string;
+  signTransaction?: (destination: string, amount: string) => Promise<string>;
+  submitTransaction?: (txBlob: string) => Promise<string>;
 }
 
 export interface MicroloanNFT {
@@ -60,7 +62,7 @@ export const connectXRPL = async (): Promise<void> => {
 // Create trust line for RLUSD
 export const createRLUSDTrustLine = async (wallet: Wallet): Promise<string> => {
   await connectXRPL();
-  
+
   const trustSet: TrustSet = {
     TransactionType: 'TrustSet',
     Account: wallet.address,
@@ -70,7 +72,7 @@ export const createRLUSDTrustLine = async (wallet: Wallet): Promise<string> => {
       value: '1000000' // 1 million RLUSD limit
     }
   };
-  
+
   const response: TxResponse<TrustSet> = await client.submitAndWait(trustSet, { wallet });
   return response.result.hash || '';
 };
@@ -78,7 +80,7 @@ export const createRLUSDTrustLine = async (wallet: Wallet): Promise<string> => {
 // Check if trust line exists
 export const checkTrustLineExists = async (address: string, currency: string, issuer: string): Promise<boolean> => {
   await connectXRPL();
-  
+
   try {
     const response = await client.request({
       command: 'account_lines',
@@ -87,7 +89,7 @@ export const checkTrustLineExists = async (address: string, currency: string, is
     });
 
     const lines = response.result.lines || [];
-    return lines.some((line: any) => 
+    return lines.some((line: any) =>
       line.currency === currency && line.account === issuer
     );
   } catch (error) {
@@ -99,9 +101,9 @@ export const checkTrustLineExists = async (address: string, currency: string, is
 // Create a new XRPL wallet
 export const createXRPLWallet = async (): Promise<XRPLWallet> => {
   await connectXRPL();
-  
+
   const wallet = Wallet.generate();
-  
+
   // Fund the wallet on testnet (for demo purposes)
   try {
     console.log('Funding wallet:', wallet.address);
@@ -109,7 +111,7 @@ export const createXRPLWallet = async (): Promise<XRPLWallet> => {
   } catch (error) {
     console.log('Wallet funding might have failed, but wallet created:', error);
   }
-  
+
   // Get account balance with retry logic
   let balance = '0';
   let retries = 3;
@@ -131,7 +133,7 @@ export const createXRPLWallet = async (): Promise<XRPLWallet> => {
       }
     }
   }
-  
+
   return {
     address: wallet.address,
     seed: wallet.seed!,
@@ -142,7 +144,7 @@ export const createXRPLWallet = async (): Promise<XRPLWallet> => {
 // Get account balances (XRP + tokens)
 export const getAccountBalances = async (address: string): Promise<AccountBalance[]> => {
   await connectXRPL();
-  
+
   try {
     const [accountInfo, accountLines] = await Promise.all([
       client.request({
@@ -158,7 +160,7 @@ export const getAccountBalances = async (address: string): Promise<AccountBalanc
     ]);
 
     const balances: AccountBalance[] = [];
-    
+
     // Add XRP balance
     const xrpBalance = (parseInt(accountInfo.result.account_data.Balance) / 1000000).toString();
     balances.push({
@@ -198,7 +200,7 @@ export const sendXRPPayment = async (
   amount: number
 ): Promise<string> => {
   await connectXRPL();
-  
+
   const payment: Payment = {
     TransactionType: 'Payment',
     Account: senderWallet.address,
@@ -211,7 +213,7 @@ export const sendXRPPayment = async (
       }
     }]
   };
-  
+
   const response: TxResponse<Payment> = await client.submitAndWait(payment, { wallet: senderWallet });
   return response.result.hash || '';
 };
@@ -223,14 +225,14 @@ export const sendRLUSDPayment = async (
   amount: number
 ): Promise<string> => {
   await connectXRPL();
-  
+
   // Check if destination has RLUSD trust line
   const hasTrustLine = await checkTrustLineExists(destinationAddress, 'RLUSD', RLUSD_ISSUER);
-  
+
   if (!hasTrustLine) {
     throw new Error('Destination account does not have RLUSD trust line. The recipient needs to create a trust line first.');
   }
-  
+
   const payment: Payment = {
     TransactionType: 'Payment',
     Account: senderWallet.address,
@@ -247,7 +249,7 @@ export const sendRLUSDPayment = async (
       }
     }]
   };
-  
+
   const response: TxResponse<Payment> = await client.submitAndWait(payment, { wallet: senderWallet });
   return response.result.hash || '';
 };
@@ -255,7 +257,7 @@ export const sendRLUSDPayment = async (
 // Get account transactions
 export const getAccountTransactions = async (address: string): Promise<any[]> => {
   await connectXRPL();
-  
+
   try {
     const response = await client.request({
       command: 'account_tx',
@@ -266,16 +268,16 @@ export const getAccountTransactions = async (address: string): Promise<any[]> =>
     });
 
     const transactions = response.result.transactions || [];
-    
+
     return transactions.map((tx: any) => {
       const transaction = tx.tx || tx;
       const meta = tx.meta;
-      
+
       // Determine transaction type and details
       let type = 'transaction';
       let amount = 0;
       let description = 'Transaction';
-      
+
       if (transaction.TransactionType === 'Payment') {
         if (transaction.Destination === address) {
           type = 'received';
@@ -284,11 +286,11 @@ export const getAccountTransactions = async (address: string): Promise<any[]> =>
           type = 'sent';
           description = 'Payment Sent';
         }
-        
+
         if (typeof transaction.Amount === 'string') {
           amount = parseInt(transaction.Amount) / 1000000; // Convert drops to XRP
         }
-        
+
         // Check if it's a DID verification transaction
         if (transaction.Memos && transaction.Memos.length > 0) {
           try {
@@ -311,7 +313,7 @@ export const getAccountTransactions = async (address: string): Promise<any[]> =>
         type = 'nft_mint';
         description = 'NFT Minted';
       }
-      
+
       return {
         id: transaction.hash || `${transaction.Account}_${transaction.Sequence}`,
         type,
@@ -332,7 +334,7 @@ export const getAccountTransactions = async (address: string): Promise<any[]> =>
 // Create DID verification transaction using AccountSet
 export const createDIDTransaction = async (wallet: Wallet, userData: { fullName: string; phone: string }): Promise<string> => {
   await connectXRPL();
-  
+
   // Create DID data to store in memo
   const didData = {
     name: userData.fullName,
@@ -340,10 +342,10 @@ export const createDIDTransaction = async (wallet: Wallet, userData: { fullName:
     timestamp: Date.now(),
     verified: true
   };
-  
+
   try {
     console.log('Creating DID transaction for wallet:', wallet.address);
-    
+
     // Use AccountSet transaction with Domain field and memo for DID verification
     // This is more appropriate than a self-payment and won't trigger temREDUNDANT
     const accountSet: AccountSet = {
@@ -358,26 +360,26 @@ export const createDIDTransaction = async (wallet: Wallet, userData: { fullName:
         }
       }]
     };
-    
+
     console.log('Submitting DID AccountSet transaction...');
-    
+
     // Use submitAndWait for better reliability
-    const response: TxResponse<AccountSet> = await client.submitAndWait(accountSet, { 
+    const response: TxResponse<AccountSet> = await client.submitAndWait(accountSet, {
       wallet,
-      autofill: true 
+      autofill: true
     });
-    
+
     console.log('DID transaction successful:', response.result.hash);
-    
+
     // Check if transaction was successful
     if (response.result.validated !== true) {
       throw new Error('Transaction was not validated');
     }
-    
+
     return response.result.hash || '';
   } catch (error) {
     console.error('DID transaction failed:', error);
-    
+
     // Handle specific XRPL errors
     if (error instanceof Error) {
       if (error.message.includes('temREDUNDANT')) {
@@ -388,14 +390,14 @@ export const createDIDTransaction = async (wallet: Wallet, userData: { fullName:
         throw new Error('Transaction timeout - please try again');
       }
     }
-    
+
     throw new Error(`Failed to create DID transaction: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 };
 
 // Create microloan as NFT
 export const createMicroloanNFT = async (
-  wallet: Wallet, 
+  wallet: Wallet,
   loanData: {
     amount: number;
     purpose: string;
@@ -404,7 +406,7 @@ export const createMicroloanNFT = async (
   }
 ): Promise<MicroloanNFT> => {
   await connectXRPL();
-  
+
   const nftMint: NFTokenMint = {
     TransactionType: 'NFTokenMint',
     Account: wallet.address,
@@ -416,10 +418,10 @@ export const createMicroloanNFT = async (
       createdAt: Date.now()
     }))
   };
-  
+
   const response: TxResponse<NFTokenMint> = await client.submitAndWait(nftMint, { wallet });
   const txHash = response.result.hash || '';
-  
+
   return {
     nftId: txHash, // Using transaction hash as NFT identifier
     borrower: wallet.address,
@@ -438,10 +440,10 @@ export const fundLoanWithRLUSD = async (
   amount: number
 ): Promise<string> => {
   await connectXRPL();
-  
+
   // Check if borrower has RLUSD trust line
   const hasTrustLine = await checkTrustLineExists(borrowerAddress, 'RLUSD', RLUSD_ISSUER);
-  
+
   if (!hasTrustLine) {
     // For now, send XRP instead with a memo explaining the issue
     const payment: Payment = {
@@ -452,19 +454,19 @@ export const fundLoanWithRLUSD = async (
       Memos: [{
         Memo: {
           MemoType: stringToHex('LOAN_FUNDING_XRP'),
-          MemoData: stringToHex(JSON.stringify({ 
-            amount, 
+          MemoData: stringToHex(JSON.stringify({
+            amount,
             timestamp: Date.now(),
             note: 'Sent as XRP - borrower needs RLUSD trust line'
           }))
         }
       }]
     };
-    
+
     const response: TxResponse<Payment> = await client.submitAndWait(payment, { wallet: funderWallet });
     return response.result.hash || '';
   }
-  
+
   // Send RLUSD if trust line exists
   const payment: Payment = {
     TransactionType: 'Payment',
@@ -482,7 +484,7 @@ export const fundLoanWithRLUSD = async (
       }
     }]
   };
-  
+
   const response: TxResponse<Payment> = await client.submitAndWait(payment, { wallet: funderWallet });
   return response.result.hash || '';
 };
@@ -490,7 +492,7 @@ export const fundLoanWithRLUSD = async (
 // Get account NFTs
 export const getAccountNFTs = async (address: string): Promise<any[]> => {
   await connectXRPL();
-  
+
   try {
     const response = await client.request({
       command: 'account_nfts',
@@ -517,10 +519,10 @@ export interface TrustScore {
 // Calculate Trust Score based on on-chain activity
 export const calculateTrustScore = async (address: string): Promise<TrustScore> => {
   await connectXRPL();
-  
+
   try {
     console.log('🔍 Calculating Trust Score for address:', address);
-    
+
     // Fetch account transactions to analyze
     const transactionsResponse = await client.request({
       command: 'account_tx',
@@ -534,7 +536,7 @@ export const calculateTrustScore = async (address: string): Promise<TrustScore> 
     let score = 0;
     let hasDID = false;
     const transactionCount = transactions.length;
-    
+
     console.log('📊 Found', transactionCount, 'transactions');
 
     // Check for DID verification in multiple ways (+10 points)
@@ -544,9 +546,9 @@ export const calculateTrustScore = async (address: string): Promise<TrustScore> 
     let didTransaction = transactions.find((tx: any) => {
       const txType = tx.tx?.TransactionType;
       const memos = tx.tx?.Memos || [];
-      
+
       console.log('🔍 Checking transaction type:', txType, 'with', memos.length, 'memos');
-      
+
       // Check for DID verification memo in AccountSet or Payment transactions
       const hasDIDMemo = memos.some((memo: any) => {
         try {
@@ -561,15 +563,15 @@ export const calculateTrustScore = async (address: string): Promise<TrustScore> 
           return false;
         }
       });
-      
+
       if ((txType === 'AccountSet' || txType === 'Payment') && hasDIDMemo) {
         console.log('✅ Found DID transaction:', txType, 'with DID memo');
         return true;
       }
-      
+
       return false;
     });
-    
+
     console.log('🔍 DID transaction found in history:', !!didTransaction);
 
     // Add points for transaction history (+1 per 10 transactions, max +20)
@@ -579,14 +581,14 @@ export const calculateTrustScore = async (address: string): Promise<TrustScore> 
     // Try to get account info for DID domain check and account age
     let accountAge: number | undefined;
     let hasDomainDID = false;
-    
+
     try {
       const accountInfo = await client.request({
         command: 'account_info',
         account: address,
         ledger_index: 'validated'
       });
-      
+
       // Check for microlend domain (DID verification)
       const domain = accountInfo.result.account_data.Domain;
       console.log('🌐 Account domain:', domain);
@@ -598,7 +600,7 @@ export const calculateTrustScore = async (address: string): Promise<TrustScore> 
           console.log('✅ Domain-based DID found!');
         }
       }
-      
+
       // Calculate approximate account age based on sequence number
       const sequence = accountInfo.result.account_data.Sequence || 0;
       console.log('📅 Account sequence:', sequence);
