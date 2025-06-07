@@ -4,7 +4,7 @@ import { WelcomeSection } from '@/components/WelcomeSection';
 import { MainContent } from '@/components/MainContent';
 import { WalletSuccessPopup } from '@/components/WalletSuccessPopup';
 import { useToast } from '@/hooks/use-toast';
-import { XRPLWallet, fundLoanWithRLUSD, fundLoanWithXRP, getAccountTransactions, checkTrustLineExists, calculateTrustScore, TrustScore, getAccountBalances, AccountBalance, isDIDAppliedForLoans as checkDIDAppliedForLoans } from '@/utils/xrplClient';
+import { XRPLWallet, fundLoanWithRLUSD, fundLoanWithXRP, getAccountTransactions, checkTrustLineExists, calculateTrustScore, TrustScore, getAccountBalances, AccountBalance, isDIDAppliedForLoans as checkDIDAppliedForLoans, applyDIDForLoans } from '@/utils/xrplClient';
 import { Wallet } from 'xrpl';
 import { XRPL_EXPLORER_URL } from '@/utils/constants';
 import { createLoanInDB, fetchUserLoans, fetchAllLoans, updateLoanFunding, type DBLoan, type LoanFilters } from '@/utils/supabase';
@@ -64,7 +64,7 @@ const Index = () => {
         };
 
         const dbLoans = await fetchAllLoans(filters);
-        
+
         // Transform DB loans to UI format
         const uiLoans = dbLoans.map(loan => ({
           id: loan.id,
@@ -101,7 +101,7 @@ const Index = () => {
     if (userWallet?.address) {
       try {
         const userLoans = await fetchUserLoans(userWallet.address);
-        
+
         // Transform DB loans to UI format
         const uiLoans = userLoans.map(loan => ({
           id: loan.id,
@@ -222,7 +222,7 @@ const Index = () => {
     // Wallet created successfully
     setUserWallet(walletInfo);
     setShowWalletSuccessPopup(true);
-    
+
     // Check trust line after wallet creation
     setTimeout(checkRLUSDTrustLine, 3000);
   };
@@ -231,7 +231,7 @@ const Index = () => {
     // Wallet connected successfully
     setUserWallet(walletInfo);
     // Skip success popup for existing wallet connections - go directly to dashboard
-    
+
     // Check trust line after wallet connection
     setTimeout(checkRLUSDTrustLine, 3000);
   };
@@ -265,12 +265,42 @@ const Index = () => {
       title: "DID Created",
       description: "Your decentralized identity has been created successfully.",
     });
+
+    // Automatically apply the DID for loans to unlock NFT creation
+    if (userWallet) {
+      try {
+        toast({
+          title: "Activating DID for Loans",
+          description: "Automatically enabling your DID for loan NFT creation...",
+        });
+
+        // Apply DID for loans automatically
+        await applyDIDForLoans(userWallet.address, userWallet.seed);
+
+        // Update the state to reflect that DID is now applied for loans
+        setIsDIDAppliedForLoans(true);
+
+        toast({
+          title: "NFT Creation Unlocked",
+          description: "Your DID is now active for creating loan NFTs!",
+        });
+
+      } catch (error) {
+        console.error('Auto-apply DID for loans failed:', error);
+        toast({
+          title: "Manual Action Required",
+          description: "DID created successfully, but you may need to manually apply it for loans in the Dashboard.",
+          variant: "destructive",
+        });
+      }
+    }
+
     // Refresh transactions and Trust Score after DID creation
     setTimeout(() => {
       fetchTransactions();
       fetchUserTrustScore();
       checkDIDLoanApplicationStatus();
-    }, 2000);
+    }, 3000);
   };
 
   const handleCreateLoan = async (newLoan: DBLoan) => {
@@ -283,7 +313,7 @@ const Index = () => {
         } : null,
         didTransactionHash: !!didTransactionHash
       });
-      
+
       // Validate required fields
       if (!newLoan.id || !newLoan.nft_id || !userWallet?.address) {
         console.error('Validation failed:', {
@@ -324,12 +354,12 @@ const Index = () => {
     } catch (error) {
       console.error('Failed to create loan:', error);
       let errorMessage = "Failed to create loan. Please try again.";
-      
+
       if (error instanceof Error) {
         console.error('Error details:', error.message);
         errorMessage = error.message;
       }
-      
+
       toast({
         title: "Error",
         description: errorMessage,
@@ -400,7 +430,7 @@ const Index = () => {
       };
 
       const dbLoans = await fetchAllLoans(filters);
-      
+
       // Transform DB loans to UI format
       const uiLoans = dbLoans.map(loan => ({
         id: loan.id,
@@ -429,7 +459,7 @@ const Index = () => {
 
     } catch (error: any) {
       console.error('RLUSD funding failed:', error);
-      
+
       // If the error is due to missing trustline, offer XRP fallback
       if (error.message === 'MISSING_TRUSTLINE') {
         // Confirm with user if they want to send XRP instead
@@ -468,7 +498,7 @@ const Index = () => {
             };
 
             const dbLoans = await fetchAllLoans(filters);
-            
+
             // Transform DB loans to UI format
             const uiLoans = dbLoans.map(loan => ({
               id: loan.id,
@@ -555,7 +585,7 @@ const Index = () => {
         onRoleChange={handleRoleChange}
         onLogout={handleLogout}
       />
-      
+
       {!userWallet ? (
         <WelcomeSection
           hasWallet={!!userWallet}
@@ -582,7 +612,7 @@ const Index = () => {
           onDIDLoanStatusChange={handleDIDLoanStatusChange}
         />
       )}
-      
+
       {showWalletSuccessPopup && userWallet && (
         <WalletSuccessPopup
           isOpen={showWalletSuccessPopup}

@@ -6,26 +6,26 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-import { Plus, Shield } from 'lucide-react';
-import { createMicroloanNFT, XRPLWallet } from '@/utils/xrplClient';
-import { Wallet } from 'xrpl';
+import { Plus, Shield, RefreshCw } from 'lucide-react';
+import { createMicroloanNFTUniversal, XRPLWallet, getCurrentDIDData, applyDIDForLoans } from '@/utils/xrplClient';
 
 interface CreateLoanFormProps {
   onCreateLoan: (loan: any) => void;
   userDidVerified: boolean;
   userWallet?: XRPLWallet;
+  onRefreshDIDStatus?: () => void;
 }
 
 // Add UUID import
 function generateUUID() {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
     const r = Math.random() * 16 | 0;
     const v = c === 'x' ? r : (r & 0x3 | 0x8);
     return v.toString(16);
   });
 }
 
-export const CreateLoanForm: React.FC<CreateLoanFormProps> = ({ onCreateLoan, userDidVerified, userWallet }) => {
+export const CreateLoanForm: React.FC<CreateLoanFormProps> = ({ onCreateLoan, userDidVerified, userWallet, onRefreshDIDStatus }) => {
   const [formData, setFormData] = useState({
     amount: '',
     purpose: '',
@@ -34,11 +34,61 @@ export const CreateLoanForm: React.FC<CreateLoanFormProps> = ({ onCreateLoan, us
     category: ''
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isCheckingDID, setIsCheckingDID] = useState(false);
   const { toast } = useToast();
+
+  const handleEnableDIDForLoans = async () => {
+    if (!userWallet) return;
+
+    setIsCheckingDID(true);
+
+    try {
+      toast({
+        title: "Checking DID Status",
+        description: "Verifying your DID and enabling NFT creation...",
+      });
+
+      // First check if user has a DID
+      const didData = await getCurrentDIDData(userWallet.address);
+
+      if (!didData) {
+        toast({
+          title: "No DID Found",
+          description: "Please create a DID first in the Dashboard tab.",
+          variant: "destructive",
+        });
+        setIsCheckingDID(false);
+        return;
+      }
+
+      // Apply DID for loans
+      await applyDIDForLoans(userWallet.address, userWallet.seed);
+
+      toast({
+        title: "NFT Creation Enabled",
+        description: "Your DID is now active for creating loan NFTs!",
+      });
+
+      // Refresh the status
+      if (onRefreshDIDStatus) {
+        onRefreshDIDStatus();
+      }
+
+    } catch (error) {
+      console.error('Failed to enable DID for loans:', error);
+      toast({
+        title: "Enable Failed",
+        description: "Could not enable DID for loans. Please try again or contact support.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsCheckingDID(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!userWallet) {
       toast({
         title: "Wallet Required",
@@ -96,11 +146,8 @@ export const CreateLoanForm: React.FC<CreateLoanFormProps> = ({ onCreateLoan, us
         description: "Minting your loan request as an NFT on XRPL...",
       });
 
-      // Create wallet instance from seed
-      const wallet = Wallet.fromSeed(userWallet.seed);
-
-      // Create microloan NFT on XRPL
-      const nftData = await createMicroloanNFT(wallet, {
+      // Create microloan NFT on XRPL (works with both seed-based and Crossmark wallets)
+      const nftData = await createMicroloanNFTUniversal(userWallet, {
         amount: parseFloat(formData.amount),
         purpose: formData.purpose,
         interestRate: parseFloat(formData.interestRate),
@@ -136,7 +183,7 @@ export const CreateLoanForm: React.FC<CreateLoanFormProps> = ({ onCreateLoan, us
       });
 
       onCreateLoan(newLoan);
-      
+
       toast({
         title: "Loan NFT Created",
         description: "Your loan request has been minted as an NFT on XRPL.",
@@ -150,7 +197,7 @@ export const CreateLoanForm: React.FC<CreateLoanFormProps> = ({ onCreateLoan, us
         duration: '',
         category: ''
       });
-      
+
       setIsSubmitting(false);
     } catch (error) {
       console.error('Failed to create loan NFT:', error);
@@ -174,7 +221,7 @@ export const CreateLoanForm: React.FC<CreateLoanFormProps> = ({ onCreateLoan, us
           Your loan request will be minted as an NFT on the XRP Ledger
         </p>
       </CardHeader>
-      
+
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -193,7 +240,7 @@ export const CreateLoanForm: React.FC<CreateLoanFormProps> = ({ onCreateLoan, us
               />
               <p className="text-xs text-gray-500">Minimum: $1 RLUSD, Maximum: $50,000 RLUSD</p>
             </div>
-            
+
             <div className="space-y-2">
               <Label htmlFor="interestRate">Interest Rate (%)</Label>
               <Input
@@ -210,7 +257,7 @@ export const CreateLoanForm: React.FC<CreateLoanFormProps> = ({ onCreateLoan, us
               <p className="text-xs text-gray-500">Annual interest rate between 0.1% and 50%</p>
             </div>
           </div>
-          
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="duration">Loan Duration</Label>
@@ -226,7 +273,7 @@ export const CreateLoanForm: React.FC<CreateLoanFormProps> = ({ onCreateLoan, us
                 </SelectContent>
               </Select>
             </div>
-            
+
             <div className="space-y-2">
               <Label htmlFor="category">Loan Category</Label>
               <Select onValueChange={(value) => setFormData({ ...formData, category: value })}>
@@ -243,7 +290,7 @@ export const CreateLoanForm: React.FC<CreateLoanFormProps> = ({ onCreateLoan, us
               </Select>
             </div>
           </div>
-          
+
           <div className="space-y-2">
             <Label htmlFor="purpose">Loan Purpose</Label>
             <Textarea
@@ -255,7 +302,7 @@ export const CreateLoanForm: React.FC<CreateLoanFormProps> = ({ onCreateLoan, us
               rows={4}
             />
           </div>
-          
+
           {!userDidVerified && (
             <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
               <div className="flex items-center gap-2 mb-2">
@@ -268,29 +315,55 @@ export const CreateLoanForm: React.FC<CreateLoanFormProps> = ({ onCreateLoan, us
               <p className="text-xs text-red-600 mt-1">
                 Go to Dashboard → Decentralized Identity (DID) section to get verified.
               </p>
+
+              {/* Quick enable button for users who already have DID */}
+              <div className="mt-3 pt-3 border-t border-red-200">
+                <p className="text-xs text-red-600 mb-2">
+                  Already have a DID? Try enabling it for loan creation:
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleEnableDIDForLoans}
+                  disabled={isCheckingDID || !userWallet}
+                  className="bg-white border-red-300 text-red-700 hover:bg-red-50"
+                >
+                  {isCheckingDID ? (
+                    <>
+                      <RefreshCw className="w-3 h-3 mr-1 animate-spin" />
+                      Checking...
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="w-3 h-3 mr-1" />
+                      Enable DID for Loans
+                    </>
+                  )}
+                </Button>
+              </div>
             </div>
           )}
-          
+
           {userDidVerified && (
             <div className="p-4 bg-green-50 border border-green-200 rounded-lg flex items-center gap-2">
               <Shield className="w-5 h-5 text-green-600" />
               <span className="text-green-800">✓ DID Verified - Ready to create loan NFTs</span>
             </div>
           )}
-          
-          <Button 
-            type="submit" 
+
+          <Button
+            type="submit"
             disabled={isSubmitting || !userWallet || !userDidVerified}
-            className={`w-full ${
-              userDidVerified 
-                ? 'bg-green-600 hover:bg-green-700' 
-                : 'bg-gray-400 cursor-not-allowed'
-            }`}
+            className={`w-full ${userDidVerified
+              ? 'bg-green-600 hover:bg-green-700'
+              : 'bg-gray-400 cursor-not-allowed'
+              }`}
           >
-            {isSubmitting 
-              ? 'Minting Loan NFT...' 
-              : !userDidVerified 
-                ? 'DID Verification Required' 
+            {isSubmitting
+              ? 'Minting Loan NFT...'
+              : !userDidVerified
+                ? 'DID Verification Required'
                 : 'Create Loan NFT on XRPL'
             }
           </Button>
