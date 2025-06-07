@@ -61,7 +61,7 @@ export const DIDSuccessPopup: React.FC<DIDSuccessPopupProps> = ({
             Your decentralized identity has been verified on the XRP Ledger. You can now access the microloan platform.
           </DialogDescription>
         </DialogHeader>
-        
+
         <div className="space-y-4">
           {/* Wallet Address */}
           <div className="space-y-2">

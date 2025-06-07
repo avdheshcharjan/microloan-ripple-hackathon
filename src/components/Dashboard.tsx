@@ -55,11 +55,11 @@ interface DashboardProps {
   onDIDLoanStatusChange?: (isApplied: boolean) => void;
 }
 
-export const Dashboard: React.FC<DashboardProps> = ({ 
-  userStats, 
-  recentActivity, 
-  userWallet, 
-  didTransactionHash, 
+export const Dashboard: React.FC<DashboardProps> = ({
+  userStats,
+  recentActivity,
+  userWallet,
+  didTransactionHash,
   onDIDCreated,
   showWalletDetails = false,
   onTransactionUpdate,
@@ -82,7 +82,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   useEffect(() => {
     const fetchUserTrustScore = async () => {
       if (!userWallet) return;
-      
+
       try {
         setIsLoadingTrustScore(true);
         const score = await calculateTrustScore(userWallet.address);
@@ -135,7 +135,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
     }
 
     setIsCreatingDID(true);
-    
+
     // Show immediate feedback
     toast({
       title: "Creating DID",
@@ -143,9 +143,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
     });
 
     try {
+
       // Determine timeout based on wallet type - Crossmark needs more time for user approval
       const timeoutDuration = (!userWallet.seed || userWallet.seed.trim() === '') ? 70000 : 30000; // 70s for Crossmark, 30s for seed wallets
-      
+
       // Add a timeout to prevent infinite hanging
       const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(() => reject(new Error('DASHBOARD_TIMEOUT: Transaction timed out')), timeoutDuration);
@@ -170,23 +171,24 @@ export const Dashboard: React.FC<DashboardProps> = ({
       
       // Use smart DID creation that handles both Crossmark and seed-based wallets
       const didPromise = createDIDTransaction(userWallet, didData);
-      
+
       const txHash = await Promise.race([didPromise, timeoutPromise]);
-      
+
       toast({
         title: "DID Created Successfully",
         description: "Your decentralized identity has been created on XRPL.",
       });
 
       onDIDCreated?.(txHash);
-      
+
       // Clear form
       setDidData({ fullName: '', phone: '' });
-      
+
     } catch (error) {
       console.error('DID creation failed:', error);
-      
+
       let errorMessage = "There was an error creating your DID. Please try again.";
+
       let errorTitle = "DID Creation Failed";
       
       if (error instanceof Error) {
@@ -217,7 +219,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
           errorMessage = "A DID already exists for this account.";
         }
       }
-      
+
       toast({
         title: errorTitle,
         description: errorMessage,
@@ -368,23 +370,23 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 <TabsTrigger value="send">Send</TabsTrigger>
                 <TabsTrigger value="receive">Receive</TabsTrigger>
               </TabsList>
-              
+
               <TabsContent value="balances">
-                <WalletBalances 
-                  userWallet={userWallet} 
+                <WalletBalances
+                  userWallet={userWallet}
                   onRefresh={onTransactionUpdate}
                   hasRLUSDTrustLine={hasRLUSDTrustLine}
                   onTrustLineCreated={onTrustLineCreated}
                 />
               </TabsContent>
-              
+
               <TabsContent value="send">
-                <SendPayment 
+                <SendPayment
                   userWallet={userWallet}
                   onPaymentSent={handlePaymentSent}
                 />
               </TabsContent>
-              
+
               <TabsContent value="receive">
                 <ReceivePayment userWallet={userWallet} />
               </TabsContent>
@@ -521,8 +523,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       required
                     />
                   </div>
-                  <Button 
-                    type="submit" 
+                  <Button
+                    type="submit"
                     disabled={isCreatingDID || !didData.fullName.trim() || !didData.phone.trim()}
                     className="w-full bg-orange-600 hover:bg-orange-700 disabled:bg-gray-400"
                   >
@@ -533,7 +535,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       </div>
                     ) : (trustScore?.factors.hasDID ? 'Update DID' : 'Create DID')}
                   </Button>
-                  
+
                   {isCreatingDID && (
                     <p className="text-xs text-center text-gray-500 mt-2">
                       This may take up to 30 seconds. Please wait...
@@ -549,6 +551,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         {/* Trust Score Card */}
+
         <Card className={`border-l-4 ${
           trustScore?.risk === 'low' ? 'border-l-green-500' : 
           trustScore?.risk === 'medium' ? 'border-l-yellow-500' : 
@@ -561,6 +564,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
               trustScore?.risk === 'medium' ? 'text-yellow-600' : 
               'text-red-600'
             }`} />
+
           </CardHeader>
           <CardContent>
             {isLoadingTrustScore ? (
@@ -570,6 +574,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
               </div>
             ) : trustScore ? (
               <>
+
                 <div className={`text-2xl font-bold ${
                   trustScore.risk === 'low' ? 'text-green-700' : 
                   trustScore.risk === 'medium' ? 'text-yellow-700' : 
@@ -689,6 +694,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   )}
                   <div className="flex justify-between items-center p-3 bg-gray-100 rounded-lg border-t-2 border-gray-300">
                     <span className="font-semibold">Total Trust Score</span>
+
                     <span className={`font-bold text-lg ${
                       trustScore.risk === 'low' ? 'text-green-600' : 
                       trustScore.risk === 'medium' ? 'text-yellow-600' : 
@@ -699,7 +705,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   </div>
                 </div>
               </div>
-              
+
               <div className="space-y-4">
                 <h4 className="font-semibold text-gray-700">How to Improve</h4>
                 <div className="space-y-3">
@@ -723,6 +729,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   )}
                   <div className="p-3 bg-green-50 rounded-lg border-l-4 border-green-500">
                     <p className="text-sm text-green-700">
+
                       <strong>Risk Level:</strong> {trustScore.risk.charAt(0).toUpperCase() + trustScore.risk.slice(1)} - {
                         trustScore.risk === 'low' ? 'Excellent creditworthiness' :
                         trustScore.risk === 'medium' ? 'Good standing with room for improvement' :

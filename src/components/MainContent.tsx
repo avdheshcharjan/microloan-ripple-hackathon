@@ -21,6 +21,8 @@ interface Loan {
   didVerified: boolean;
   riskScore: 'low' | 'medium' | 'high';
   createdAt: string;
+  nftId: string;
+  txHash: string;
 }
 
 interface UserStats {
@@ -45,7 +47,7 @@ interface RecentActivity {
 interface MainContentProps {
   loans: Loan[];
   userStats: UserStats;
-  recentActivity: RecentActivity[];
+  recentActivity: any[];
   hasWallet: boolean;
   userRole: 'borrower' | 'lender';
   onCreateLoan: (loan: any) => void;

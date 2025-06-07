@@ -4,6 +4,7 @@ import { useToast } from '@/hooks/use-toast';
 import { ExternalLink, AlertTriangle } from 'lucide-react';
 import { XRPLWallet, getAccountBalances, connectXRPL } from '@/utils/xrplClient';
 import { setupRLUSDTrustLine } from '@/utils/rlusdUtils';
+import sdk from "@crossmarkio/sdk";
 
 interface CrossmarkConnectionProps {
   isConnecting: boolean;
@@ -173,8 +174,6 @@ export const CrossmarkConnection: React.FC<CrossmarkConnectionProps> = ({
         seed: '', // Crossmark doesn't expose seed
         balance: xrpBalance
       };
-
-
 
       toast({
         title: "🎉 Wallet Connected Successfully",

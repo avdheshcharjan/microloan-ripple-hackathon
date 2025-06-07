@@ -7,28 +7,140 @@ import { useToast } from '@/hooks/use-toast';
 import { XRPLWallet, fundLoanWithRLUSD, fundLoanWithXRP, getAccountTransactions, checkTrustLineExists, calculateTrustScore, TrustScore, getAccountBalances, AccountBalance, isDIDAppliedForLoans as checkDIDAppliedForLoans } from '@/utils/xrplClient';
 import { Wallet } from 'xrpl';
 import { XRPL_EXPLORER_URL } from '@/utils/constants';
+import { createLoanInDB, fetchUserLoans, fetchAllLoans, updateLoanFunding, type DBLoan, type LoanFilters } from '@/utils/supabase';
+
+interface UserStats {
+  totalLent: number;
+  totalBorrowed: number;
+  activeLoans: number;
+  completedLoans: number;
+  portfolioReturn: number;
+}
 
 const Index = () => {
   const [userWallet, setUserWallet] = useState<XRPLWallet | null>(null);
   const [userRole, setUserRole] = useState<'borrower' | 'lender'>('borrower');
-  const [showWalletSuccessPopup, setShowWalletSuccessPopup] = useState(false);
-  const [didTransactionHash, setDidTransactionHash] = useState('');
   const [loans, setLoans] = useState<any[]>([]);
-  const [recentActivity, setRecentActivity] = useState<any[]>([]);
-  const [hasRLUSDTrustLine, setHasRLUSDTrustLine] = useState(false);
-  const [userTrustScore, setUserTrustScore] = useState<TrustScore | null>(null);
-  const [userBalances, setUserBalances] = useState<AccountBalance[]>([]);
-  const [isDIDAppliedForLoans, setIsDIDAppliedForLoans] = useState(false);
-
-  const [userStats] = useState({
+  const [userStats, setUserStats] = useState<UserStats>({
     totalLent: 0,
     totalBorrowed: 0,
     activeLoans: 0,
     completedLoans: 0,
     portfolioReturn: 0
   });
+  const [recentActivity, setRecentActivity] = useState<any[]>([]);
+  const [showWalletSuccessPopup, setShowWalletSuccessPopup] = useState(false);
+  const [didTransactionHash, setDidTransactionHash] = useState('');
+  const [hasRLUSDTrustLine, setHasRLUSDTrustLine] = useState(false);
+  const [userTrustScore, setUserTrustScore] = useState<TrustScore | null>(null);
+  const [userBalances, setUserBalances] = useState<AccountBalance[]>([]);
+  const [isDIDAppliedForLoans, setIsDIDAppliedForLoans] = useState(false);
+  const [loanFilters, setLoanFilters] = useState({
+    status: undefined as 'active' | 'funded' | 'completed' | undefined,
+    riskScore: undefined as 'low' | 'medium' | 'high' | undefined,
+    minAmount: undefined as number | undefined,
+    maxAmount: undefined as number | undefined
+  });
+  const [loanSort, setLoanSort] = useState({
+    column: 'created_at' as 'created_at' | 'amount' | 'interest_rate' | 'funded_amount',
+    ascending: false
+  });
 
   const { toast } = useToast();
+
+  // Effect for fetching all loans when filters change
+  useEffect(() => {
+    const fetchLoans = async () => {
+      try {
+        const filters: LoanFilters = {
+          status: loanFilters.status,
+          riskScore: loanFilters.riskScore,
+          minAmount: loanFilters.minAmount,
+          maxAmount: loanFilters.maxAmount,
+          orderBy: {
+            column: loanSort.column || 'created_at',
+            ascending: loanSort.ascending
+          }
+        };
+
+        const dbLoans = await fetchAllLoans(filters);
+        
+        // Transform DB loans to UI format
+        const uiLoans = dbLoans.map(loan => ({
+          id: loan.id,
+          borrower: loan.borrower_address === userWallet?.address ? 'You' : loan.borrower_address,
+          amount: loan.amount,
+          purpose: loan.purpose,
+          interestRate: loan.interest_rate,
+          duration: loan.duration,
+          fundedAmount: loan.funded_amount,
+          status: loan.status,
+          didVerified: loan.did_verified,
+          riskScore: loan.risk_score,
+          createdAt: loan.created_at,
+          nftId: loan.nft_id,
+          txHash: loan.tx_hash
+        }));
+
+        setLoans(uiLoans);
+      } catch (error) {
+        console.error('Failed to fetch loans:', error);
+        toast({
+          title: "Error",
+          description: "Failed to fetch loans. Please try again.",
+          variant: "destructive"
+        });
+      }
+    };
+
+    fetchLoans();
+  }, [loanFilters, loanSort, userWallet?.address, toast]);
+
+  // Fetch user's loans
+  const fetchUserLoanData = async () => {
+    if (userWallet?.address) {
+      try {
+        const userLoans = await fetchUserLoans(userWallet.address);
+        
+        // Transform DB loans to UI format
+        const uiLoans = userLoans.map(loan => ({
+          id: loan.id,
+          borrower: 'You',
+          amount: loan.amount,
+          purpose: loan.purpose,
+          interestRate: loan.interest_rate,
+          duration: loan.duration,
+          fundedAmount: loan.funded_amount,
+          status: loan.status,
+          didVerified: loan.did_verified,
+          riskScore: loan.risk_score,
+          createdAt: loan.created_at,
+          nftId: loan.nft_id,
+          txHash: loan.tx_hash
+        }));
+
+        // Calculate user stats
+        const totalBorrowed = userLoans.reduce((sum, loan) => sum + loan.amount, 0);
+        const activeLoans = userLoans.filter(loan => loan.status === 'active').length;
+        const completedLoans = userLoans.filter(loan => loan.status === 'completed').length;
+
+        setUserStats(prevStats => ({
+          ...prevStats,
+          totalBorrowed,
+          activeLoans,
+          completedLoans
+        }));
+
+        // Update loans state
+        setLoans(prevLoans => {
+          const nonUserLoans = prevLoans.filter(loan => loan.borrower !== 'You');
+          return [...uiLoans, ...nonUserLoans];
+        });
+      } catch (error) {
+        console.error('Failed to fetch user loans:', error);
+      }
+    }
+  };
 
   // Check RLUSD trust line status
   const checkRLUSDTrustLine = async () => {
@@ -94,13 +206,17 @@ const Index = () => {
     }
   };
 
+  // Effect for fetching user-specific data when wallet connects
   useEffect(() => {
-    fetchTransactions();
-    checkRLUSDTrustLine();
-    fetchUserTrustScore();
-    fetchUserBalances();
-    checkDIDLoanApplicationStatus();
-  }, [userWallet, didTransactionHash]); // Re-fetch when DID is created
+    if (userWallet) {
+      fetchTransactions();
+      checkRLUSDTrustLine();
+      fetchUserTrustScore();
+      fetchUserBalances();
+      checkDIDLoanApplicationStatus();
+      fetchUserLoanData();
+    }
+  }, [userWallet, didTransactionHash]);
 
   const handleWalletCreated = (walletInfo: XRPLWallet) => {
     // Wallet created successfully
@@ -128,14 +244,22 @@ const Index = () => {
     setUserWallet(null);
     setDidTransactionHash('');
     setLoans([]);
+    setUserStats({
+      totalLent: 0,
+      totalBorrowed: 0,
+      activeLoans: 0,
+      completedLoans: 0,
+      portfolioReturn: 0
+    });
     setRecentActivity([]);
     setShowWalletSuccessPopup(false);
     setHasRLUSDTrustLine(false);
     setUserTrustScore(null);
     setUserBalances([]);
+    setIsDIDAppliedForLoans(false);
   };
 
-  const handleDIDCreated = (txHash: string) => {
+  const handleDIDCreated = async (txHash: string) => {
     setDidTransactionHash(txHash);
     toast({
       title: "DID Created",
@@ -145,37 +269,79 @@ const Index = () => {
     setTimeout(() => {
       fetchTransactions();
       fetchUserTrustScore();
+      checkDIDLoanApplicationStatus();
     }, 2000);
   };
 
-  const handleCreateLoan = (newLoan: any) => {
-    const txUrl = `${XRPL_EXPLORER_URL}${newLoan.txHash}`;
-    const loanWithTx = {
-      ...newLoan,
-      txUrl,
-      // Use actual Trust Score if available, otherwise fallback to medium risk
-      riskScore: userTrustScore?.risk || 'medium',
-      borrower: userWallet?.address || 'You'
-    };
-    
-    setLoans([loanWithTx, ...loans]);
-    
-    toast({
-      title: "Loan NFT Created",
-      description: (
-        <div>
-          Loan NFT created successfully!
-          <a 
-            href={txUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="block mt-1 text-sm text-blue-500 hover:text-blue-600 underline"
-          >
-            View transaction details →
-          </a>
-        </div>
-      ),
-    });
+  const handleCreateLoan = async (newLoan: DBLoan) => {
+    try {
+      console.log('Received loan data:', {
+        newLoan,
+        userWallet: userWallet ? {
+          address: userWallet.address,
+          exists: !!userWallet
+        } : null,
+        didTransactionHash: !!didTransactionHash
+      });
+      
+      // Validate required fields
+      if (!newLoan.id || !newLoan.nft_id || !userWallet?.address) {
+        console.error('Validation failed:', {
+          hasId: !!newLoan.id,
+          hasNftId: !!newLoan.nft_id,
+          hasWalletAddress: !!userWallet?.address
+        });
+        throw new Error('Missing required fields for loan creation');
+      }
+
+      // Create loan in Supabase - use the newLoan directly since it's already in DBLoan format
+      console.log('Sending loan data to Supabase:', newLoan);
+
+      await createLoanInDB(newLoan);
+
+      // Update local state - transform DBLoan to UI format
+      setLoans(prevLoans => [...prevLoans, {
+        id: newLoan.id,
+        borrower: 'You',
+        amount: newLoan.amount,
+        purpose: newLoan.purpose,
+        interestRate: newLoan.interest_rate,
+        duration: newLoan.duration,
+        fundedAmount: newLoan.funded_amount,
+        status: newLoan.status,
+        didVerified: newLoan.did_verified,
+        riskScore: newLoan.risk_score,
+        createdAt: newLoan.created_at,
+        nftId: newLoan.nft_id,
+        txHash: newLoan.tx_hash
+      }]);
+
+      toast({
+        title: "Loan Created",
+        description: "Your loan has been created and stored successfully.",
+      });
+
+    } catch (error) {
+      console.error('Failed to create loan:', error);
+      let errorMessage = "Failed to create loan. Please try again.";
+      
+      if (error instanceof Error) {
+        console.error('Error details:', error.message);
+        errorMessage = error.message;
+      }
+      
+      toast({
+        title: "Error",
+        description: errorMessage,
+        variant: "destructive"
+      });
+    }
+  };
+
+  const handleTransactionUpdate = () => {
+    fetchTransactions();
+    fetchUserLoanData();
+    fetchUserBalances();
   };
 
   const handleFundLoan = async (loanId: string) => {
@@ -183,6 +349,15 @@ const Index = () => {
       toast({
         title: "Wallet Required",
         description: "Please create a wallet first.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!hasRLUSDTrustLine) {
+      toast({
+        title: "RLUSD Trust Line Required",
+        description: "You need to create an RLUSD trust line first to send RLUSD payments.",
         variant: "destructive",
       });
       return;
@@ -201,18 +376,49 @@ const Index = () => {
         description: "Attempting to fund loan with RLUSD on XRPL...",
       });
 
-      const txHash = await fundLoanWithRLUSD(wallet, loan.borrower, fundingAmount, loan.nftId);
+      const txHash = await fundLoanWithRLUSD(wallet, loan.borrower === 'You' ? userWallet.address : loan.borrower, fundingAmount, loan.nftId);
+
+      // Update funding in Supabase
+      const newFundedAmount = Math.min(loan.fundedAmount + fundingAmount, loan.amount);
+      await updateLoanFunding(loanId, newFundedAmount, txHash);
 
       toast({
         title: "RLUSD Funding Successful",
         description: `RLUSD payment processed on XRPL. TX: ${txHash.slice(0, 8)}...`,
       });
 
-      setLoans(loans.map(loan => 
-        loan.id === loanId 
-          ? { ...loan, fundedAmount: Math.min(loan.fundedAmount + fundingAmount, loan.amount) }
-          : loan
-      ));
+      // Refresh loans after successful funding
+      const filters: LoanFilters = {
+        status: loanFilters.status,
+        riskScore: loanFilters.riskScore,
+        minAmount: loanFilters.minAmount,
+        maxAmount: loanFilters.maxAmount,
+        orderBy: {
+          column: loanSort.column || 'created_at',
+          ascending: loanSort.ascending
+        }
+      };
+
+      const dbLoans = await fetchAllLoans(filters);
+      
+      // Transform DB loans to UI format
+      const uiLoans = dbLoans.map(loan => ({
+        id: loan.id,
+        borrower: loan.borrower_address === userWallet.address ? 'You' : loan.borrower_address,
+        amount: loan.amount,
+        purpose: loan.purpose,
+        interestRate: loan.interest_rate,
+        duration: loan.duration,
+        fundedAmount: loan.funded_amount,
+        status: loan.status,
+        didVerified: loan.did_verified,
+        riskScore: loan.risk_score,
+        createdAt: loan.created_at,
+        nftId: loan.nft_id,
+        txHash: loan.tx_hash
+      }));
+
+      setLoans(uiLoans);
 
       // Refresh data after successful funding
       setTimeout(() => {
@@ -238,18 +444,49 @@ const Index = () => {
               description: "Funding loan with XRP as fallback...",
             });
 
-            const xrpTxHash = await fundLoanWithXRP(wallet, loan.borrower, fundingAmount, loan.nftId);
+            const xrpTxHash = await fundLoanWithXRP(wallet, loan.borrower === 'You' ? userWallet.address : loan.borrower, fundingAmount, loan.nftId);
+
+            // Update funding in Supabase
+            const newFundedAmount = Math.min(loan.fundedAmount + fundingAmount, loan.amount);
+            await updateLoanFunding(loanId, newFundedAmount, xrpTxHash);
 
             toast({
               title: "XRP Funding Successful",
               description: `XRP payment processed on XRPL. TX: ${xrpTxHash.slice(0, 8)}...`,
             });
 
-            setLoans(loans.map(loan => 
-              loan.id === loanId 
-                ? { ...loan, fundedAmount: Math.min(loan.fundedAmount + fundingAmount, loan.amount) }
-                : loan
-            ));
+            // Refresh loans after successful funding
+            const filters: LoanFilters = {
+              status: loanFilters.status,
+              riskScore: loanFilters.riskScore,
+              minAmount: loanFilters.minAmount,
+              maxAmount: loanFilters.maxAmount,
+              orderBy: {
+                column: loanSort.column || 'created_at',
+                ascending: loanSort.ascending
+              }
+            };
+
+            const dbLoans = await fetchAllLoans(filters);
+            
+            // Transform DB loans to UI format
+            const uiLoans = dbLoans.map(loan => ({
+              id: loan.id,
+              borrower: loan.borrower_address === userWallet.address ? 'You' : loan.borrower_address,
+              amount: loan.amount,
+              purpose: loan.purpose,
+              interestRate: loan.interest_rate,
+              duration: loan.duration,
+              fundedAmount: loan.funded_amount,
+              status: loan.status,
+              didVerified: loan.did_verified,
+              riskScore: loan.risk_score,
+              createdAt: loan.created_at,
+              nftId: loan.nft_id,
+              txHash: loan.tx_hash
+            }));
+
+            setLoans(uiLoans);
 
             // Refresh data after successful funding
             setTimeout(() => {
@@ -288,6 +525,7 @@ const Index = () => {
     setTimeout(() => {
       fetchTransactions();
       fetchUserTrustScore();
+      fetchUserBalances();
     }, 2000);
   };
 
@@ -295,9 +533,21 @@ const Index = () => {
     setUserRole(role);
   };
 
+  const handleFilterChange = (newFilters: typeof loanFilters) => {
+    setLoanFilters(newFilters);
+  };
+
+  const handleSortChange = (newSort: typeof loanSort) => {
+    setLoanSort(newSort);
+  };
+
+  const handleDIDLoanStatusChange = (isApplied: boolean) => {
+    setIsDIDAppliedForLoans(isApplied);
+  };
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-green-50">
-      <Header 
+    <div className="min-h-screen bg-gray-50">
+      <Header
         hasWallet={!!userWallet}
         didTransactionHash={didTransactionHash}
         walletAddress={userWallet?.address || ''}
@@ -324,11 +574,12 @@ const Index = () => {
           userWallet={userWallet}
           didTransactionHash={didTransactionHash}
           onDIDCreated={handleDIDCreated}
-          onTransactionUpdate={fetchTransactions}
+          onTransactionUpdate={handleTransactionUpdate}
           hasRLUSDTrustLine={hasRLUSDTrustLine}
           onTrustLineCreated={handleTrustLineCreated}
           userBalances={userBalances}
           isDIDAppliedForLoans={isDIDAppliedForLoans}
+          onDIDLoanStatusChange={handleDIDLoanStatusChange}
         />
       )}
       
