@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -22,6 +21,8 @@ interface Loan {
   didVerified: boolean;
   riskScore: 'low' | 'medium' | 'high';
   createdAt: string;
+  nftId: string;
+  txHash: string;
 }
 
 interface UserStats {
@@ -46,7 +47,7 @@ interface RecentActivity {
 interface MainContentProps {
   loans: Loan[];
   userStats: UserStats;
-  recentActivity: RecentActivity[];
+  recentActivity: any[];
   hasWallet: boolean;
   onCreateLoan: (loan: any) => void;
   onFundLoan: (loanId: string) => void;

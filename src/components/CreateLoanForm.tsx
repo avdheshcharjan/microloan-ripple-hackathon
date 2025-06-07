@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -15,6 +14,15 @@ interface CreateLoanFormProps {
   onCreateLoan: (loan: any) => void;
   userDidVerified: boolean;
   userWallet?: XRPLWallet;
+}
+
+// Add UUID import
+function generateUUID() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
 }
 
 export const CreateLoanForm: React.FC<CreateLoanFormProps> = ({ onCreateLoan, userDidVerified, userWallet }) => {
@@ -99,22 +107,33 @@ export const CreateLoanForm: React.FC<CreateLoanFormProps> = ({ onCreateLoan, us
         duration: formData.duration
       });
 
+      console.log('NFT Creation Response:', nftData);
+
+      // Ensure all fields are properly formatted according to DBLoan interface
       const newLoan = {
-        id: nftData.nftId,
-        borrower: 'You',
+        id: generateUUID(), // Generate a proper UUID for the database
+        nft_id: nftData.nftId,
+        borrower_address: userWallet.address,
         amount: parseFloat(formData.amount),
         purpose: formData.purpose,
-        interestRate: parseFloat(formData.interestRate),
+        interest_rate: parseFloat(formData.interestRate),
         duration: formData.duration,
-        fundedAmount: 0,
+        funded_amount: 0,
         status: 'active' as const,
-        didVerified: userDidVerified,
-        riskScore: 'medium' as const,
-        createdAt: new Date().toISOString(),
-        category: formData.category,
-        nftId: nftData.nftId,
-        txHash: nftData.txHash
+        did_verified: userDidVerified,
+        risk_score: 'medium' as const,
+        created_at: new Date().toISOString(),
+        tx_hash: nftData.txHash || ''
       };
+
+      console.log('Submitting loan data:', {
+        newLoan,
+        userDidVerified,
+        userWallet: userWallet ? {
+          address: userWallet.address,
+          hasSeed: !!userWallet.seed
+        } : null
+      });
 
       onCreateLoan(newLoan);
       
