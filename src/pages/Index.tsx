@@ -4,7 +4,7 @@ import { WelcomeSection } from '@/components/WelcomeSection';
 import { MainContent } from '@/components/MainContent';
 import { WalletSuccessPopup } from '@/components/WalletSuccessPopup';
 import { useToast } from '@/hooks/use-toast';
-import { XRPLWallet, fundLoanWithRLUSD, getAccountTransactions, checkTrustLineExists, calculateTrustScore, TrustScore } from '@/utils/xrplClient';
+import { XRPLWallet, fundLoanWithRLUSD, fundLoanWithXRP, getAccountTransactions, checkTrustLineExists, calculateTrustScore, TrustScore, getAccountBalances, AccountBalance } from '@/utils/xrplClient';
 import { Wallet } from 'xrpl';
 import { XRPL_EXPLORER_URL } from '@/utils/constants';
 
@@ -17,6 +17,7 @@ const Index = () => {
   const [recentActivity, setRecentActivity] = useState<any[]>([]);
   const [hasRLUSDTrustLine, setHasRLUSDTrustLine] = useState(false);
   const [userTrustScore, setUserTrustScore] = useState<TrustScore | null>(null);
+  const [userBalances, setUserBalances] = useState<AccountBalance[]>([]);
 
   const [userStats] = useState({
     totalLent: 0,
@@ -68,10 +69,23 @@ const Index = () => {
     }
   };
 
+  // Fetch user balances
+  const fetchUserBalances = async () => {
+    if (userWallet) {
+      try {
+        const balances = await getAccountBalances(userWallet.address);
+        setUserBalances(balances);
+      } catch (error) {
+        console.error('Failed to fetch user balances:', error);
+      }
+    }
+  };
+
   useEffect(() => {
     fetchTransactions();
     checkRLUSDTrustLine();
     fetchUserTrustScore();
+    fetchUserBalances();
   }, [userWallet, didTransactionHash]); // Re-fetch when DID is created
 
   const handleWalletCreated = (walletInfo: XRPLWallet) => {
@@ -104,6 +118,7 @@ const Index = () => {
     setShowWalletSuccessPopup(false);
     setHasRLUSDTrustLine(false);
     setUserTrustScore(null);
+    setUserBalances([]);
   };
 
   const handleDIDCreated = (txHash: string) => {
@@ -159,51 +174,93 @@ const Index = () => {
       return;
     }
 
-    // Check if user has RLUSD trust line
-    if (!hasRLUSDTrustLine) {
-      toast({
-        title: "RLUSD Trust Line Required",
-        description: "You need to create an RLUSD trust line first to send RLUSD payments.",
-        variant: "destructive",
-      });
-      return;
-    }
+    const loan = loans.find(l => l.id === loanId);
+    if (!loan) return;
+
+    const wallet = Wallet.fromSeed(userWallet.seed);
+    const fundingAmount = 100; // Fixed funding amount for demo
 
     try {
-      const loan = loans.find(l => l.id === loanId);
-      if (!loan) return;
-
+      // First, try to fund with RLUSD (primary goal)
       toast({
         title: "Processing RLUSD Payment",
-        description: "Funding loan with RLUSD on XRPL...",
+        description: "Attempting to fund loan with RLUSD on XRPL...",
       });
 
-      const wallet = Wallet.fromSeed(userWallet.seed);
-      const txHash = await fundLoanWithRLUSD(wallet, loan.borrower, 100);
+      const txHash = await fundLoanWithRLUSD(wallet, loan.borrower, fundingAmount, loan.nftId);
 
       toast({
-        title: "Funding Successful",
+        title: "RLUSD Funding Successful",
         description: `RLUSD payment processed on XRPL. TX: ${txHash.slice(0, 8)}...`,
       });
 
       setLoans(loans.map(loan => 
         loan.id === loanId 
-          ? { ...loan, fundedAmount: Math.min(loan.fundedAmount + 100, loan.amount) }
+          ? { ...loan, fundedAmount: Math.min(loan.fundedAmount + fundingAmount, loan.amount) }
           : loan
       ));
 
-      // Refresh transactions and Trust Score after funding
+      // Refresh data after successful funding
       setTimeout(() => {
         fetchTransactions();
         fetchUserTrustScore();
+        fetchUserBalances();
       }, 2000);
-    } catch (error) {
-      console.error('Funding failed:', error);
-      toast({
-        title: "Funding Failed",
-        description: "There was an error processing the RLUSD payment.",
-        variant: "destructive",
-      });
+
+    } catch (error: any) {
+      console.error('RLUSD funding failed:', error);
+      
+      // If the error is due to missing trustline, offer XRP fallback
+      if (error.message === 'MISSING_TRUSTLINE') {
+        // Confirm with user if they want to send XRP instead
+        const userConfirmed = window.confirm(
+          `The borrower doesn't have an RLUSD trust line set up.\n\nWould you like to fund this loan with ${fundingAmount} XRP instead?`
+        );
+
+        if (userConfirmed) {
+          try {
+            toast({
+              title: "Processing XRP Payment",
+              description: "Funding loan with XRP as fallback...",
+            });
+
+            const xrpTxHash = await fundLoanWithXRP(wallet, loan.borrower, fundingAmount, loan.nftId);
+
+            toast({
+              title: "XRP Funding Successful",
+              description: `XRP payment processed on XRPL. TX: ${xrpTxHash.slice(0, 8)}...`,
+            });
+
+            setLoans(loans.map(loan => 
+              loan.id === loanId 
+                ? { ...loan, fundedAmount: Math.min(loan.fundedAmount + fundingAmount, loan.amount) }
+                : loan
+            ));
+
+            // Refresh data after successful funding
+            setTimeout(() => {
+              fetchTransactions();
+              fetchUserTrustScore();
+              fetchUserBalances();
+            }, 2000);
+
+          } catch (xrpError) {
+            console.error('XRP funding also failed:', xrpError);
+            toast({
+              title: "XRP Funding Failed",
+              description: "There was an error processing the XRP payment.",
+              variant: "destructive",
+            });
+          }
+        }
+      } else {
+        // Handle other RLUSD funding errors
+        toast({
+          title: "RLUSD Funding Failed",
+          description: "There was an error processing the RLUSD payment. Please try again.",
+          variant: "destructive",
+        });
+      }
     }
   };
 
@@ -256,6 +313,7 @@ const Index = () => {
           onTransactionUpdate={fetchTransactions}
           hasRLUSDTrustLine={hasRLUSDTrustLine}
           onTrustLineCreated={handleTrustLineCreated}
+          userBalances={userBalances}
         />
       )}
       

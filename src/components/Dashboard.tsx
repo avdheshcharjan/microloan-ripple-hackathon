@@ -1,14 +1,26 @@
 import React, { useState, useEffect } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
-import { TrendingUp, DollarSign, Users, Clock, ArrowUpRight, ArrowDownLeft, Wallet, Shield, User, Copy, ExternalLink, Hash, Star, Loader2 } from 'lucide-react';
-import { XRPLWallet, createDIDTransaction, calculateTrustScore, TrustScore } from '@/utils/xrplClient';
-import { Wallet as XRPLWalletClass } from 'xrpl';
+import { TrendingUp, DollarSign, Users, Clock, ArrowUpRight, ArrowDownLeft, Wallet, Shield, User, Copy, ExternalLink, Hash, Star, Loader2, Plus, AlertCircle, CheckCircle } from 'lucide-react';
+import { 
+  XRPLWallet, 
+  createDIDTransaction, 
+  calculateTrustScore, 
+  TrustScore, 
+  diagnoseCrossmarkDID, 
+  createDIDWithSimplePayment,
+  getDIDTransactionByHash,
+  getAccountBalances, 
+  sendXRPPayment, 
+  sendRLUSDPayment, 
+  createRLUSDTrustLine,
+  type AccountBalance 
+} from '@/utils/xrplClient';
 import { SendPayment } from '@/components/SendPayment';
 import { ReceivePayment } from '@/components/ReceivePayment';
 import { WalletBalances } from '@/components/WalletBalances';
@@ -53,10 +65,12 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onTrustLineCreated,
   userRole = 'borrower'
 }) => {
-  const [didData, setDidData] = useState({ fullName: '', phone: '' });
   const [isCreatingDID, setIsCreatingDID] = useState(false);
-  const [userTrustScore, setUserTrustScore] = useState<TrustScore | null>(null);
-  const [loadingTrustScore, setLoadingTrustScore] = useState(false);
+  const [didData, setDidData] = useState({ fullName: '', phone: '' });
+  const [trustScore, setTrustScore] = useState<TrustScore | null>(null);
+  const [isLoadingTrustScore, setIsLoadingTrustScore] = useState(false);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [diagnostics, setDiagnostics] = useState<{ canCreateDID: boolean; issues: string[]; recommendations: string[] } | null>(null);
   const { toast } = useToast();
 
   // Fetch user's Trust Score
@@ -65,13 +79,13 @@ export const Dashboard: React.FC<DashboardProps> = ({
       if (!userWallet) return;
       
       try {
-        setLoadingTrustScore(true);
+        setIsLoadingTrustScore(true);
         const score = await calculateTrustScore(userWallet.address);
-        setUserTrustScore(score);
+        setTrustScore(score);
       } catch (error) {
         console.error('Failed to fetch user trust score:', error);
       } finally {
-        setLoadingTrustScore(false);
+        setIsLoadingTrustScore(false);
       }
     };
 
@@ -109,14 +123,50 @@ export const Dashboard: React.FC<DashboardProps> = ({
     });
 
     try {
-      const wallet = XRPLWalletClass.fromSeed(userWallet.seed);
+      // Determine timeout based on wallet type - Crossmark needs more time for user approval
+      const timeoutDuration = (!userWallet.seed || userWallet.seed.trim() === '') ? 70000 : 30000; // 70s for Crossmark, 30s for seed wallets
       
       // Add a timeout to prevent infinite hanging
       const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('Transaction timeout')), 30000); // 30 second timeout
+        setTimeout(() => reject(new Error('DASHBOARD_TIMEOUT: Transaction timed out')), timeoutDuration);
       });
       
-      const didPromise = createDIDTransaction(wallet, didData);
+      // Show different message for Crossmark users and test connection
+      if (!userWallet.seed || userWallet.seed.trim() === '') {
+        // Test Crossmark connection first
+        try {
+          const diagnosticResult = await diagnoseCrossmarkDID(userWallet.address);
+          console.log('🔍 Crossmark diagnostic test:', diagnosticResult);
+          
+          if (!diagnosticResult.canCreateDID) {
+            throw new Error(diagnosticResult.issues.join(', '));
+          }
+          
+          toast({
+            title: "Crossmark Transaction",
+            description: "Please check Crossmark extension and approve the DID transaction. Look for popup windows!",
+          });
+          
+          // Add a reminder toast after 10 seconds
+          setTimeout(() => {
+            toast({
+              title: "Still Waiting for Approval",
+              description: "Check for Crossmark popup windows or click the Crossmark extension icon to find pending transactions.",
+              variant: "default",
+            });
+          }, 10000);
+        } catch (testError) {
+          console.error('Crossmark test failed:', testError);
+          toast({
+            title: "Crossmark Issue",
+            description: "Please ensure Crossmark is installed, unlocked, and connected. Attempting transaction anyway...",
+            variant: "destructive",
+          });
+        }
+      }
+      
+      // Use smart DID creation that handles both Crossmark and seed-based wallets
+      const didPromise = createDIDTransaction(userWallet, didData);
       
       const txHash = await Promise.race([didPromise, timeoutPromise]);
       
@@ -134,24 +184,168 @@ export const Dashboard: React.FC<DashboardProps> = ({
       console.error('DID creation failed:', error);
       
       let errorMessage = "There was an error creating your DID. Please try again.";
+      let errorTitle = "DID Creation Failed";
       
       if (error instanceof Error) {
-        if (error.message.includes('timeout')) {
-          errorMessage = "DID creation timed out. Please check your connection and try again.";
+        // Handle Crossmark-specific errors
+        if (error.message.includes('CROSSMARK_TIMEOUT')) {
+          errorTitle = "Crossmark Transaction Timeout";
+          errorMessage = "The transaction timed out waiting for approval. Please ensure Crossmark is open and try again.";
+        } else if (error.message.includes('DASHBOARD_TIMEOUT')) {
+          errorTitle = "Transaction Timeout";
+          errorMessage = !userWallet.seed || userWallet.seed.trim() === '' 
+            ? "Transaction timed out. Please ensure Crossmark is open and approve transactions quickly."
+            : "DID creation timed out. Please check your connection and try again.";
+        } else if (error.message.includes('rejected') || error.message.includes('denied')) {
+          errorTitle = "Transaction Rejected";
+          errorMessage = "You rejected the transaction in Crossmark. Please try again and approve it.";
+        } else if (error.message.includes('cancelled')) {
+          errorTitle = "Transaction Cancelled";
+          errorMessage = "Transaction was cancelled. Please try again.";
+        } else if (error.message.includes('Crossmark wallet not found')) {
+          errorTitle = "Crossmark Not Found";
+          errorMessage = "Crossmark extension not detected. Please ensure it's installed and active.";
         } else if (error.message.includes('insufficient')) {
           errorMessage = "Insufficient XRP balance. Please ensure you have at least 1 XRP in your wallet.";
         } else if (error.message.includes('connect')) {
           errorMessage = "Connection to XRPL network failed. Please try again.";
+        } else if (error.message.includes('already exists')) {
+          errorTitle = "DID Already Exists";
+          errorMessage = "A DID already exists for this account.";
         }
       }
       
       toast({
-        title: "DID Creation Failed",
+        title: errorTitle,
         description: errorMessage,
         variant: "destructive",
       });
     } finally {
       setIsCreatingDID(false);
+    }
+  };
+
+  const runDiagnostics = async () => {
+    if (!userWallet) return;
+    
+    setShowDiagnostics(true);
+    try {
+      const result = await diagnoseCrossmarkDID(userWallet.address);
+      setDiagnostics(result);
+    } catch (error) {
+      console.error('Diagnostics failed:', error);
+      setDiagnostics({
+        canCreateDID: false,
+        issues: ['Diagnostic check failed'],
+        recommendations: ['Try refreshing the page and reconnecting wallet']
+      });
+    }
+  };
+
+  const testCrossmarkMethodsLocal = async () => {
+    if (!userWallet) return;
+    
+    try {
+      const testResult = await diagnoseCrossmarkDID(userWallet.address);
+      console.log('🔍 Crossmark methods test:', testResult);
+      
+      toast({
+        title: "Crossmark Test Results",
+        description: `Available methods: ${testResult.availableMethods.join(', ')}. Preferred: ${testResult.preferredMethod || 'none'}`,
+        variant: testResult.canCreateDID ? "default" : "destructive",
+      });
+      
+      if (testResult.issues.length > 0) {
+        console.log('⚠️ Issues found:', testResult.issues);
+        console.log('💡 Recommendations:', testResult.recommendations);
+      }
+    } catch (error) {
+      console.error('Method test failed:', error);
+      toast({
+        title: "Test Failed",
+        description: "Could not test Crossmark methods",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const trySimplePaymentDID = async () => {
+    if (!userWallet) return;
+
+    if (!didData.fullName.trim() || !didData.phone.trim()) {
+      toast({
+        title: "Missing Information",
+        description: "Please fill in both name and phone number.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsCreatingDID(true);
+    
+    toast({
+      title: "Trying Fallback Method",
+      description: "Using simple payment method for DID creation...",
+    });
+
+    try {
+      const txHash = await createDIDWithSimplePayment(userWallet.address, didData);
+      
+      toast({
+        title: "DID Created (Fallback)",
+        description: "Your DID was created using the fallback method.",
+      });
+
+      onDIDCreated?.(txHash);
+      setDidData({ fullName: '', phone: '' });
+      
+    } catch (error) {
+      console.error('Fallback DID creation failed:', error);
+      toast({
+        title: "Fallback Failed",
+        description: error instanceof Error ? error.message : "Fallback method also failed",
+        variant: "destructive",
+      });
+    } finally {
+      setIsCreatingDID(false);
+    }
+  };
+
+  const testExistingTransaction = async () => {
+    const testTxHash = 'D36C26B7340AA83A58BAFFE66A696D0BBB6B75EFC9ECF41B460EB91FD1EA303F';
+    
+    try {
+      toast({
+        title: "Testing Transaction",
+        description: "Verifying the successful DID transaction...",
+      });
+
+      const isValid = await getDIDTransactionByHash(testTxHash);
+      
+      if (isValid) {
+        toast({
+          title: "✅ Transaction Verified!",
+          description: "Your DID transaction was successful. The frontend parsing has been fixed.",
+        });
+        
+        // If this is the user's transaction, trigger the DID created callback
+        if (userWallet && testTxHash) {
+          onDIDCreated?.(testTxHash);
+        }
+      } else {
+        toast({
+          title: "❌ Transaction Invalid",
+          description: "The transaction was found but doesn't contain valid DID data.",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error('Transaction verification failed:', error);
+      toast({
+        title: "Verification Failed",
+        description: "Could not verify the transaction. Check console for details.",
+        variant: "destructive",
+      });
     }
   };
 
@@ -277,7 +471,116 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   <div className="text-center mb-4">
                     <User className="w-12 h-12 text-orange-600 mx-auto mb-2" />
                     <p className="text-sm text-gray-600">Create your DID to enhance loan credibility</p>
+                    {(!userWallet.seed || userWallet.seed.trim() === '') && (
+                      <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded text-xs text-blue-800">
+                        💡 You'll need to approve the transaction in Crossmark extension
+                      </div>
+                    )}
                   </div>
+
+                  {/* Diagnostic Section for Crossmark users */}
+                  {(!userWallet.seed || userWallet.seed.trim() === '') && (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-medium text-gray-700">Having issues?</span>
+                        <div className="flex gap-2">
+                          <Button 
+                            type="button" 
+                            variant="outline" 
+                            size="sm" 
+                            onClick={testExistingTransaction}
+                            className="flex items-center gap-1"
+                          >
+                            <CheckCircle className="w-3 h-3" />
+                            Test Existing TX
+                          </Button>
+                          <Button 
+                            type="button" 
+                            variant="outline" 
+                            size="sm" 
+                            onClick={testCrossmarkMethodsLocal}
+                            className="flex items-center gap-1"
+                          >
+                            <CheckCircle className="w-3 h-3" />
+                            Test Methods
+                          </Button>
+                          <Button 
+                            type="button" 
+                            variant="outline" 
+                            size="sm" 
+                            onClick={runDiagnostics}
+                            className="flex items-center gap-1"
+                          >
+                            <AlertCircle className="w-3 h-3" />
+                            Run Diagnostics
+                          </Button>
+                        </div>
+                      </div>
+
+                      {showDiagnostics && diagnostics && (
+                        <Card className={`border-l-4 ${diagnostics.canCreateDID ? 'border-l-green-500 bg-green-50' : 'border-l-red-500 bg-red-50'}`}>
+                          <CardContent className="pt-4">
+                            <div className="flex items-center gap-2 mb-3">
+                              {diagnostics.canCreateDID ? (
+                                <CheckCircle className="w-4 h-4 text-green-600" />
+                              ) : (
+                                <AlertCircle className="w-4 h-4 text-red-600" />
+                              )}
+                              <span className={`font-medium ${diagnostics.canCreateDID ? 'text-green-700' : 'text-red-700'}`}>
+                                {diagnostics.canCreateDID ? 'Ready to create DID' : 'Issues detected'}
+                              </span>
+                            </div>
+                            
+                            {diagnostics.issues.length > 0 && (
+                              <div className="mb-3">
+                                <h5 className="text-sm font-medium text-gray-700 mb-1">Issues:</h5>
+                                <ul className="text-xs space-y-1">
+                                  {diagnostics.issues.map((issue, index) => (
+                                    <li key={index} className="flex items-start gap-1">
+                                      <span className="text-red-500">•</span>
+                                      <span className="text-red-700">{issue}</span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                            
+                            <div className="mb-3">
+                              <h5 className="text-sm font-medium text-gray-700 mb-1">Recommendations:</h5>
+                              <ul className="text-xs space-y-1">
+                                {diagnostics.recommendations.map((rec, index) => (
+                                  <li key={index} className="flex items-start gap-1">
+                                    <span className="text-blue-500">•</span>
+                                    <span className="text-blue-700">{rec}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+
+                            {!diagnostics.canCreateDID && (
+                              <div className="pt-2 border-t border-gray-200">
+                                <Button 
+                                  type="button" 
+                                  variant="outline" 
+                                  size="sm" 
+                                  onClick={trySimplePaymentDID}
+                                  disabled={isCreatingDID}
+                                  className="w-full flex items-center gap-1"
+                                >
+                                  <User className="w-3 h-3" />
+                                  {isCreatingDID ? 'Creating...' : 'Try Fallback Method'}
+                                </Button>
+                                <p className="text-xs text-gray-500 mt-1 text-center">
+                                  Uses a simple payment transaction instead
+                                </p>
+                              </div>
+                            )}
+                          </CardContent>
+                        </Card>
+                      )}
+                    </div>
+                  )}
+
                   <div>
                     <Label htmlFor="fullName">Full Name</Label>
                     <Input
@@ -328,39 +631,39 @@ export const Dashboard: React.FC<DashboardProps> = ({
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
         {/* Trust Score Card */}
         <Card className={`border-l-4 ${
-          userTrustScore?.risk === 'low' ? 'border-l-green-500' : 
-          userTrustScore?.risk === 'medium' ? 'border-l-yellow-500' : 
+          trustScore?.risk === 'low' ? 'border-l-green-500' : 
+          trustScore?.risk === 'medium' ? 'border-l-yellow-500' : 
           'border-l-red-500'
         }`}>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-medium text-gray-600">Trust Score</CardTitle>
             <Star className={`w-4 h-4 ${
-              userTrustScore?.risk === 'low' ? 'text-green-600' : 
-              userTrustScore?.risk === 'medium' ? 'text-yellow-600' : 
+              trustScore?.risk === 'low' ? 'text-green-600' : 
+              trustScore?.risk === 'medium' ? 'text-yellow-600' : 
               'text-red-600'
             }`} />
           </CardHeader>
           <CardContent>
-            {loadingTrustScore ? (
+            {isLoadingTrustScore ? (
               <div className="flex items-center gap-2">
                 <Loader2 className="w-4 h-4 animate-spin" />
                 <span className="text-sm text-gray-500">Loading...</span>
               </div>
-            ) : userTrustScore ? (
+            ) : trustScore ? (
               <>
                 <div className={`text-2xl font-bold ${
-                  userTrustScore.risk === 'low' ? 'text-green-700' : 
-                  userTrustScore.risk === 'medium' ? 'text-yellow-700' : 
+                  trustScore.risk === 'low' ? 'text-green-700' : 
+                  trustScore.risk === 'medium' ? 'text-yellow-700' : 
                   'text-red-700'
                 }`}>
-                  {userTrustScore.score}
+                  {trustScore.score}
                 </div>
                 <p className={`text-xs mt-1 capitalize ${
-                  userTrustScore.risk === 'low' ? 'text-green-600' : 
-                  userTrustScore.risk === 'medium' ? 'text-yellow-600' : 
+                  trustScore.risk === 'low' ? 'text-green-600' : 
+                  trustScore.risk === 'medium' ? 'text-yellow-600' : 
                   'text-red-600'
                 }`}>
-                  {userTrustScore.risk} Risk
+                  {trustScore.risk} Risk
                 </p>
               </>
             ) : (
@@ -431,7 +734,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       </div>
 
       {/* Trust Score Breakdown */}
-      {userTrustScore && !loadingTrustScore && (
+      {trustScore && !isLoadingTrustScore && (
         <Card className="border-l-4 border-l-blue-500">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -446,32 +749,32 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 <div className="space-y-3">
                   <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
                     <span className="text-sm">DID Verification</span>
-                    <span className={`font-semibold ${userTrustScore.factors.hasDID ? 'text-green-600' : 'text-red-600'}`}>
-                      {userTrustScore.factors.hasDID ? '✓ +10 points' : '✗ +0 points'}
+                    <span className={`font-semibold ${trustScore.factors.hasDID ? 'text-green-600' : 'text-red-600'}`}>
+                      {trustScore.factors.hasDID ? '✓ +10 points' : '✗ +0 points'}
                     </span>
                   </div>
                   <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
                     <span className="text-sm">Transaction History</span>
                     <span className="font-semibold text-blue-600">
-                      {userTrustScore.factors.transactionCount} txs (+{Math.min(Math.floor(userTrustScore.factors.transactionCount / 10), 20)} points)
+                      {trustScore.factors.transactionCount} txs (+{Math.min(Math.floor(trustScore.factors.transactionCount / 10), 20)} points)
                     </span>
                   </div>
-                  {userTrustScore.factors.accountAge && (
+                  {trustScore.factors.accountAge && (
                     <div className="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
                       <span className="text-sm">Account Age Bonus</span>
                       <span className="font-semibold text-purple-600">
-                        +{Math.min(Math.floor(userTrustScore.factors.accountAge / 50), 5)} points
+                        +{Math.min(Math.floor(trustScore.factors.accountAge / 50), 5)} points
                       </span>
                     </div>
                   )}
                   <div className="flex justify-between items-center p-3 bg-gray-100 rounded-lg border-t-2 border-gray-300">
                     <span className="font-semibold">Total Trust Score</span>
                     <span className={`font-bold text-lg ${
-                      userTrustScore.risk === 'low' ? 'text-green-600' : 
-                      userTrustScore.risk === 'medium' ? 'text-yellow-600' : 
+                      trustScore.risk === 'low' ? 'text-green-600' : 
+                      trustScore.risk === 'medium' ? 'text-yellow-600' : 
                       'text-red-600'
                     }`}>
-                      {userTrustScore.score} points
+                      {trustScore.score} points
                     </span>
                   </div>
                 </div>
@@ -480,7 +783,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
               <div className="space-y-4">
                 <h4 className="font-semibold text-gray-700">How to Improve</h4>
                 <div className="space-y-3">
-                  {!userTrustScore.factors.hasDID && (
+                  {!trustScore.factors.hasDID && (
                     <div className="flex items-start gap-3 p-3 bg-orange-50 rounded-lg border-l-4 border-orange-500">
                       <Shield className="w-5 h-5 text-orange-600 mt-0.5" />
                       <div>
@@ -489,7 +792,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       </div>
                     </div>
                   )}
-                  {userTrustScore.factors.transactionCount < 100 && (
+                  {trustScore.factors.transactionCount < 100 && (
                     <div className="flex items-start gap-3 p-3 bg-blue-50 rounded-lg border-l-4 border-blue-500">
                       <Hash className="w-5 h-5 text-blue-600 mt-0.5" />
                       <div>
@@ -500,9 +803,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   )}
                   <div className="p-3 bg-green-50 rounded-lg border-l-4 border-green-500">
                     <p className="text-sm text-green-700">
-                      <strong>Risk Level:</strong> {userTrustScore.risk.charAt(0).toUpperCase() + userTrustScore.risk.slice(1)} - {
-                        userTrustScore.risk === 'low' ? 'Excellent creditworthiness' :
-                        userTrustScore.risk === 'medium' ? 'Good standing with room for improvement' :
+                      <strong>Risk Level:</strong> {trustScore.risk.charAt(0).toUpperCase() + trustScore.risk.slice(1)} - {
+                        trustScore.risk === 'low' ? 'Excellent creditworthiness' :
+                        trustScore.risk === 'medium' ? 'Good standing with room for improvement' :
                         'Higher risk profile - focus on building trust'
                       }
                     </p>

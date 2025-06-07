@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { User, Clock, DollarSign, Shield, Loader2, Info } from 'lucide-react';
-import { calculateTrustScore, TrustScore } from '@/utils/xrplClient';
+import { calculateTrustScore, TrustScore, AccountBalance } from '@/utils/xrplClient';
 
 interface LoanCardProps {
   loan: {
@@ -24,9 +24,10 @@ interface LoanCardProps {
   onFund?: (loanId: string) => void;
   isOwn?: boolean;
   hasRLUSDTrustLine?: boolean;
+  userBalances?: AccountBalance[];
 }
 
-export const LoanCard: React.FC<LoanCardProps> = ({ loan, onFund, isOwn = false, hasRLUSDTrustLine = false }) => {
+export const LoanCard: React.FC<LoanCardProps> = ({ loan, onFund, isOwn = false, hasRLUSDTrustLine = false, userBalances = [] }) => {
   const [trustScore, setTrustScore] = useState<TrustScore | null>(null);
   const [loadingTrustScore, setLoadingTrustScore] = useState(true);
   const fundingProgress = (loan.fundedAmount / loan.amount) * 100;
@@ -94,6 +95,30 @@ export const LoanCard: React.FC<LoanCardProps> = ({ loan, onFund, isOwn = false,
       </div>
     );
   };
+
+  // Check if user has sufficient balance for funding
+  const checkSufficientBalance = () => {
+    const fundingAmount = 100; // Fixed funding amount for demo
+    
+    // Check RLUSD balance first (priority)
+    const rlusdBalance = userBalances.find(balance => 
+      balance.currency === 'RLUSD' && balance.issuer === 'rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De'
+    );
+    
+    if (rlusdBalance && parseFloat(rlusdBalance.value) >= fundingAmount) {
+      return { canFund: true, currency: 'RLUSD', balance: parseFloat(rlusdBalance.value) };
+    }
+    
+    // Check XRP balance as fallback
+    const xrpBalance = userBalances.find(balance => balance.currency === 'XRP');
+    if (xrpBalance && parseFloat(xrpBalance.value) >= fundingAmount) {
+      return { canFund: true, currency: 'XRP', balance: parseFloat(xrpBalance.value) };
+    }
+    
+    return { canFund: false, currency: null, balance: 0 };
+  };
+
+  const balanceCheck = checkSufficientBalance();
 
   return (
     <Card className="hover:shadow-lg transition-shadow duration-300 border-l-4 border-l-blue-500">
@@ -184,9 +209,12 @@ export const LoanCard: React.FC<LoanCardProps> = ({ loan, onFund, isOwn = false,
           <Button 
             onClick={() => onFund?.(loan.id)}
             className="w-full bg-blue-600 hover:bg-blue-700"
-            disabled={!hasRLUSDTrustLine}
+            disabled={!balanceCheck.canFund}
           >
-            {hasRLUSDTrustLine ? 'Fund This Loan' : 'RLUSD Trust Line Required'}
+            {!balanceCheck.canFund 
+              ? 'Insufficient Balance' 
+              : `Fund This Loan (${balanceCheck.currency})`
+            }
           </Button>
         )}
         {loan.status === 'funded' && (

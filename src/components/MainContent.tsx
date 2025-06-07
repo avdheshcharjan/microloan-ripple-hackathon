@@ -7,7 +7,7 @@ import { LoanCard } from '@/components/LoanCard';
 import { CreateLoanForm } from '@/components/CreateLoanForm';
 import { Dashboard } from '@/components/Dashboard';
 import { Filter, SortAsc, SortDesc } from 'lucide-react';
-import { XRPLWallet } from '@/utils/xrplClient';
+import { XRPLWallet, AccountBalance } from '@/utils/xrplClient';
 
 interface Loan {
   id: string;
@@ -56,6 +56,7 @@ interface MainContentProps {
   onTransactionUpdate?: () => void;
   hasRLUSDTrustLine: boolean;
   onTrustLineCreated: () => void;
+  userBalances: AccountBalance[];
 }
 
 export const MainContent: React.FC<MainContentProps> = ({
@@ -71,7 +72,8 @@ export const MainContent: React.FC<MainContentProps> = ({
   onDIDCreated,
   onTransactionUpdate,
   hasRLUSDTrustLine,
-  onTrustLineCreated
+  onTrustLineCreated,
+  userBalances
 }) => {
   const [riskFilter, setRiskFilter] = useState<'all' | 'low' | 'medium' | 'high'>('all');
   const [sortBy, setSortBy] = useState<'amount' | 'interest' | 'trustScore'>('amount');
@@ -176,6 +178,7 @@ export const MainContent: React.FC<MainContentProps> = ({
                       key={loan.id}
                       loan={loan}
                       isOwn={true}
+                      userBalances={userBalances}
                     />
                   ))}
                 </div>
@@ -252,6 +255,7 @@ export const MainContent: React.FC<MainContentProps> = ({
                     loan={loan}
                     onFund={onFundLoan}
                     hasRLUSDTrustLine={hasRLUSDTrustLine}
+                    userBalances={userBalances}
                   />
                 ))}
               </div>
