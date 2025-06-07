@@ -1,17 +1,26 @@
-
 import React from 'react';
 import { Button } from '@/components/ui/button';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { useToast } from '@/hooks/use-toast';
-import { Shield, Zap, Wallet, Copy, LogOut, ExternalLink } from 'lucide-react';
+import { Shield, Zap, Wallet, Copy, LogOut, ExternalLink, User, Building } from 'lucide-react';
 
 interface HeaderProps {
   hasWallet: boolean;
   didTransactionHash: string;
   walletAddress: string;
+  userRole?: 'borrower' | 'lender';
+  onRoleChange?: (role: 'borrower' | 'lender') => void;
   onLogout?: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ hasWallet, didTransactionHash, walletAddress, onLogout }) => {
+export const Header: React.FC<HeaderProps> = ({ 
+  hasWallet, 
+  didTransactionHash, 
+  walletAddress, 
+  userRole, 
+  onRoleChange, 
+  onLogout 
+}) => {
   const { toast } = useToast();
 
   const copyToClipboard = (text: string, label: string) => {
@@ -60,6 +69,35 @@ export const Header: React.FC<HeaderProps> = ({ hasWallet, didTransactionHash, w
 
             {hasWallet && (
               <>
+                {/* Role Toggle - Only visible when wallet is connected */}
+                {userRole && onRoleChange && (
+                  <ToggleGroup
+                    type="single"
+                    value={userRole}
+                    onValueChange={(value) => {
+                      if (value && (value === 'borrower' || value === 'lender')) {
+                        onRoleChange(value);
+                      }
+                    }}
+                    className="bg-gray-50 border rounded-lg p-1"
+                  >
+                    <ToggleGroupItem
+                      value="borrower"
+                      className="flex items-center gap-2 px-3 py-2 text-sm data-[state=on]:bg-white data-[state=on]:shadow-sm"
+                    >
+                      <User className="w-4 h-4" />
+                      Borrower
+                    </ToggleGroupItem>
+                    <ToggleGroupItem
+                      value="lender"
+                      className="flex items-center gap-2 px-3 py-2 text-sm data-[state=on]:bg-white data-[state=on]:shadow-sm"
+                    >
+                      <Building className="w-4 h-4" />
+                      Lender
+                    </ToggleGroupItem>
+                  </ToggleGroup>
+                )}
+
                 {/* DID Status */}
                 {didTransactionHash && (
                   <div className="flex items-center gap-2">

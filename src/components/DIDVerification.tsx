@@ -50,8 +50,8 @@ export const DIDVerification: React.FC<DIDVerificationProps> = ({ isVerified, on
       // Create wallet instance from seed
       const wallet = Wallet.fromSeed(walletInfo.seed);
 
-      // Create DID verification transaction
-      const txHash = await createDIDTransaction(wallet, verificationData);
+      // Create DID verification transaction using the created wallet info
+      const txHash = await createDIDTransaction(walletInfo, verificationData);
 
       toast({
         title: "DID Verification Complete",

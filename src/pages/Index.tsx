@@ -4,7 +4,7 @@ import { WelcomeSection } from '@/components/WelcomeSection';
 import { MainContent } from '@/components/MainContent';
 import { WalletSuccessPopup } from '@/components/WalletSuccessPopup';
 import { useToast } from '@/hooks/use-toast';
-import { XRPLWallet, fundLoanWithRLUSD, getAccountTransactions, checkTrustLineExists, calculateTrustScore, TrustScore } from '@/utils/xrplClient';
+import { XRPLWallet, fundLoanWithRLUSD, fundLoanWithXRP, getAccountTransactions, checkTrustLineExists, calculateTrustScore, TrustScore, getAccountBalances, AccountBalance, isDIDAppliedForLoans as checkDIDAppliedForLoans } from '@/utils/xrplClient';
 import { Wallet } from 'xrpl';
 import { XRPL_EXPLORER_URL } from '@/utils/constants';
 import { createLoanInDB, fetchUserLoans, fetchAllLoans, updateLoanFunding, type DBLoan, type LoanFilters } from '@/utils/supabase';
@@ -19,6 +19,7 @@ interface UserStats {
 
 const Index = () => {
   const [userWallet, setUserWallet] = useState<XRPLWallet | null>(null);
+  const [userRole, setUserRole] = useState<'borrower' | 'lender'>('borrower');
   const [loans, setLoans] = useState<any[]>([]);
   const [userStats, setUserStats] = useState<UserStats>({
     totalLent: 0,
@@ -32,6 +33,8 @@ const Index = () => {
   const [didTransactionHash, setDidTransactionHash] = useState('');
   const [hasRLUSDTrustLine, setHasRLUSDTrustLine] = useState(false);
   const [userTrustScore, setUserTrustScore] = useState<TrustScore | null>(null);
+  const [userBalances, setUserBalances] = useState<AccountBalance[]>([]);
+  const [isDIDAppliedForLoans, setIsDIDAppliedForLoans] = useState(false);
   const [loanFilters, setLoanFilters] = useState({
     status: undefined as 'active' | 'funded' | 'completed' | undefined,
     riskScore: undefined as 'low' | 'medium' | 'high' | undefined,
@@ -121,12 +124,12 @@ const Index = () => {
         const activeLoans = userLoans.filter(loan => loan.status === 'active').length;
         const completedLoans = userLoans.filter(loan => loan.status === 'completed').length;
 
-        setUserStats({
-          ...userStats,
+        setUserStats(prevStats => ({
+          ...prevStats,
           totalBorrowed,
           activeLoans,
           completedLoans
-        });
+        }));
 
         // Update loans state
         setLoans(prevLoans => {
@@ -179,18 +182,44 @@ const Index = () => {
     }
   };
 
+  // Fetch user balances
+  const fetchUserBalances = async () => {
+    if (userWallet) {
+      try {
+        const balances = await getAccountBalances(userWallet.address);
+        setUserBalances(balances);
+      } catch (error) {
+        console.error('Failed to fetch user balances:', error);
+      }
+    }
+  };
+
+  // Check if DID has been applied for loans
+  const checkDIDLoanApplicationStatus = async () => {
+    if (userWallet) {
+      try {
+        const isApplied = await checkDIDAppliedForLoans(userWallet.address);
+        setIsDIDAppliedForLoans(isApplied);
+      } catch (error) {
+        console.error('Failed to check DID loan application status:', error);
+      }
+    }
+  };
+
   // Effect for fetching user-specific data when wallet connects
   useEffect(() => {
     if (userWallet) {
       fetchTransactions();
       checkRLUSDTrustLine();
       fetchUserTrustScore();
+      fetchUserBalances();
+      checkDIDLoanApplicationStatus();
       fetchUserLoanData();
     }
   }, [userWallet, didTransactionHash]);
 
   const handleWalletCreated = (walletInfo: XRPLWallet) => {
-    console.log('Wallet created:', walletInfo);
+    // Wallet created successfully
     setUserWallet(walletInfo);
     setShowWalletSuccessPopup(true);
     
@@ -199,7 +228,7 @@ const Index = () => {
   };
 
   const handleWalletConnected = (walletInfo: XRPLWallet) => {
-    console.log('Wallet connected:', walletInfo);
+    // Wallet connected successfully
     setUserWallet(walletInfo);
     // Skip success popup for existing wallet connections - go directly to dashboard
     
@@ -226,6 +255,8 @@ const Index = () => {
     setShowWalletSuccessPopup(false);
     setHasRLUSDTrustLine(false);
     setUserTrustScore(null);
+    setUserBalances([]);
+    setIsDIDAppliedForLoans(false);
   };
 
   const handleDIDCreated = async (txHash: string) => {
@@ -238,6 +269,7 @@ const Index = () => {
     setTimeout(() => {
       fetchTransactions();
       fetchUserTrustScore();
+      checkDIDLoanApplicationStatus();
     }, 2000);
   };
 
@@ -309,6 +341,7 @@ const Index = () => {
   const handleTransactionUpdate = () => {
     fetchTransactions();
     fetchUserLoanData();
+    fetchUserBalances();
   };
 
   const handleFundLoan = async (loanId: string) => {
@@ -330,31 +363,31 @@ const Index = () => {
       return;
     }
 
-    try {
-      const loan = loans.find(l => l.id === loanId);
-      if (!loan) return;
+    const loan = loans.find(l => l.id === loanId);
+    if (!loan) return;
 
+    const wallet = Wallet.fromSeed(userWallet.seed);
+    const fundingAmount = 100; // Fixed funding amount for demo
+
+    try {
+      // First, try to fund with RLUSD (primary goal)
       toast({
         title: "Processing RLUSD Payment",
-        description: "Funding loan with RLUSD on XRPL...",
+        description: "Attempting to fund loan with RLUSD on XRPL...",
       });
 
-      // Create wallet instance from seed
-      const wallet = Wallet.fromSeed(userWallet.seed);
-      
-      // Process RLUSD payment on XRPL
-      const fundingAmount = 100; // You can make this dynamic based on user input
-      const txHash = await fundLoanWithRLUSD(
-        wallet, 
-        loan.borrower === 'You' ? userWallet.address : loan.borrower, 
-        fundingAmount
-      );
+      const txHash = await fundLoanWithRLUSD(wallet, loan.borrower === 'You' ? userWallet.address : loan.borrower, fundingAmount, loan.nftId);
 
       // Update funding in Supabase
       const newFundedAmount = Math.min(loan.fundedAmount + fundingAmount, loan.amount);
       await updateLoanFunding(loanId, newFundedAmount, txHash);
 
-      // Refresh loans
+      toast({
+        title: "RLUSD Funding Successful",
+        description: `RLUSD payment processed on XRPL. TX: ${txHash.slice(0, 8)}...`,
+      });
+
+      // Refresh loans after successful funding
       const filters: LoanFilters = {
         status: loanFilters.status,
         riskScore: loanFilters.riskScore,
@@ -387,24 +420,98 @@ const Index = () => {
 
       setLoans(uiLoans);
 
-      toast({
-        title: "Funding Successful",
-        description: `RLUSD payment processed on XRPL. TX: ${txHash.slice(0, 8)}...`,
-      });
-
-      // Refresh transactions and Trust Score after funding
+      // Refresh data after successful funding
       setTimeout(() => {
         fetchTransactions();
         fetchUserTrustScore();
+        fetchUserBalances();
       }, 2000);
 
-    } catch (error) {
-      console.error('Funding failed:', error);
-      toast({
-        title: "Funding Failed",
-        description: "There was an error processing the RLUSD payment.",
-        variant: "destructive",
-      });
+    } catch (error: any) {
+      console.error('RLUSD funding failed:', error);
+      
+      // If the error is due to missing trustline, offer XRP fallback
+      if (error.message === 'MISSING_TRUSTLINE') {
+        // Confirm with user if they want to send XRP instead
+        const userConfirmed = window.confirm(
+          `The borrower doesn't have an RLUSD trust line set up.\n\nWould you like to fund this loan with ${fundingAmount} XRP instead?`
+        );
+
+        if (userConfirmed) {
+          try {
+            toast({
+              title: "Processing XRP Payment",
+              description: "Funding loan with XRP as fallback...",
+            });
+
+            const xrpTxHash = await fundLoanWithXRP(wallet, loan.borrower === 'You' ? userWallet.address : loan.borrower, fundingAmount, loan.nftId);
+
+            // Update funding in Supabase
+            const newFundedAmount = Math.min(loan.fundedAmount + fundingAmount, loan.amount);
+            await updateLoanFunding(loanId, newFundedAmount, xrpTxHash);
+
+            toast({
+              title: "XRP Funding Successful",
+              description: `XRP payment processed on XRPL. TX: ${xrpTxHash.slice(0, 8)}...`,
+            });
+
+            // Refresh loans after successful funding
+            const filters: LoanFilters = {
+              status: loanFilters.status,
+              riskScore: loanFilters.riskScore,
+              minAmount: loanFilters.minAmount,
+              maxAmount: loanFilters.maxAmount,
+              orderBy: {
+                column: loanSort.column || 'created_at',
+                ascending: loanSort.ascending
+              }
+            };
+
+            const dbLoans = await fetchAllLoans(filters);
+            
+            // Transform DB loans to UI format
+            const uiLoans = dbLoans.map(loan => ({
+              id: loan.id,
+              borrower: loan.borrower_address === userWallet.address ? 'You' : loan.borrower_address,
+              amount: loan.amount,
+              purpose: loan.purpose,
+              interestRate: loan.interest_rate,
+              duration: loan.duration,
+              fundedAmount: loan.funded_amount,
+              status: loan.status,
+              didVerified: loan.did_verified,
+              riskScore: loan.risk_score,
+              createdAt: loan.created_at,
+              nftId: loan.nft_id,
+              txHash: loan.tx_hash
+            }));
+
+            setLoans(uiLoans);
+
+            // Refresh data after successful funding
+            setTimeout(() => {
+              fetchTransactions();
+              fetchUserTrustScore();
+              fetchUserBalances();
+            }, 2000);
+
+          } catch (xrpError) {
+            console.error('XRP funding also failed:', xrpError);
+            toast({
+              title: "XRP Funding Failed",
+              description: "There was an error processing the XRP payment.",
+              variant: "destructive",
+            });
+          }
+        }
+      } else {
+        // Handle other RLUSD funding errors
+        toast({
+          title: "RLUSD Funding Failed",
+          description: "There was an error processing the RLUSD payment. Please try again.",
+          variant: "destructive",
+        });
+      }
     }
   };
 
@@ -418,7 +525,12 @@ const Index = () => {
     setTimeout(() => {
       fetchTransactions();
       fetchUserTrustScore();
+      fetchUserBalances();
     }, 2000);
+  };
+
+  const handleRoleChange = (role: 'borrower' | 'lender') => {
+    setUserRole(role);
   };
 
   const handleFilterChange = (newFilters: typeof loanFilters) => {
@@ -429,46 +541,56 @@ const Index = () => {
     setLoanSort(newSort);
   };
 
+  const handleDIDLoanStatusChange = (isApplied: boolean) => {
+    setIsDIDAppliedForLoans(isApplied);
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       <Header
         hasWallet={!!userWallet}
         didTransactionHash={didTransactionHash}
         walletAddress={userWallet?.address || ''}
+        userRole={userRole}
+        onRoleChange={handleRoleChange}
         onLogout={handleLogout}
       />
-
-      <main className="container mx-auto px-4 py-8">
-        {!userWallet ? (
-          <WelcomeSection
-            hasWallet={!!userWallet}
-            onWalletCreated={handleWalletCreated}
-            onWalletConnected={handleWalletConnected}
-          />
-        ) : (
-          <MainContent
-            loans={loans}
-            userStats={userStats}
-            recentActivity={recentActivity}
-            hasWallet={!!userWallet}
-            onCreateLoan={handleCreateLoan}
-            onFundLoan={handleFundLoan}
-            userWallet={userWallet}
-            didTransactionHash={didTransactionHash}
-            onDIDCreated={handleDIDCreated}
-            onTransactionUpdate={handleTransactionUpdate}
-            hasRLUSDTrustLine={hasRLUSDTrustLine}
-            onTrustLineCreated={handleTrustLineCreated}
-          />
-        )}
-      </main>
-
-      <WalletSuccessPopup
-        isOpen={showWalletSuccessPopup}
-        onClose={handleWalletPopupClose}
-        walletAddress={userWallet?.address || ''}
-        balance={userWallet?.balance || '0'}
-      />
+      
+      {!userWallet ? (
+        <WelcomeSection
+          hasWallet={!!userWallet}
+          onWalletCreated={handleWalletCreated}
+          onWalletConnected={handleWalletConnected}
+        />
+      ) : (
+        <MainContent
+          loans={loans}
+          userStats={userStats}
+          recentActivity={recentActivity}
+          hasWallet={!!userWallet}
+          userRole={userRole}
+          onCreateLoan={handleCreateLoan}
+          onFundLoan={handleFundLoan}
+          userWallet={userWallet}
+          didTransactionHash={didTransactionHash}
+          onDIDCreated={handleDIDCreated}
+          onTransactionUpdate={handleTransactionUpdate}
+          hasRLUSDTrustLine={hasRLUSDTrustLine}
+          onTrustLineCreated={handleTrustLineCreated}
+          userBalances={userBalances}
+          isDIDAppliedForLoans={isDIDAppliedForLoans}
+          onDIDLoanStatusChange={handleDIDLoanStatusChange}
+        />
+      )}
+      
+      {showWalletSuccessPopup && userWallet && (
+        <WalletSuccessPopup
+          isOpen={showWalletSuccessPopup}
+          onClose={handleWalletPopupClose}
+          walletAddress={userWallet.address}
+          balance={userWallet.balance}
+        />
+      )}
     </div>
   );
 };
