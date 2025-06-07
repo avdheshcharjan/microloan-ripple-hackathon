@@ -7,7 +7,7 @@ export interface XRPLWallet {
   address: string;
   seed: string;
   balance: string;
-  signTransaction?: (destination: string, amount: string) => Promise<string>;
+  signTransaction?: (tx: any) => Promise<string>;
   submitTransaction?: (txBlob: string) => Promise<string>;
 }
 
@@ -332,7 +332,10 @@ export const getAccountTransactions = async (address: string): Promise<any[]> =>
 };
 
 // Create DID verification transaction using AccountSet
-export const createDIDTransaction = async (wallet: Wallet, userData: { fullName: string; phone: string }): Promise<string> => {
+export const createDIDTransaction = async (
+  wallet: Wallet | XRPLWallet,
+  userData: { fullName: string; phone: string }
+): Promise<string> => {
   await connectXRPL();
 
   // Create DID data to store in memo
@@ -343,44 +346,47 @@ export const createDIDTransaction = async (wallet: Wallet, userData: { fullName:
     verified: true
   };
 
+  // Build the AccountSet transaction
+  const accountSet: AccountSet = {
+    TransactionType: 'AccountSet',
+    Account: wallet.address,
+    Domain: stringToHex('microlend.did'),
+    Memos: [{
+      Memo: {
+        MemoType: stringToHex('DID_VERIFICATION'),
+        MemoData: stringToHex(JSON.stringify(didData))
+      }
+    }]
+  };
+
+  // If Crossmark wallet (no seed, has signTransaction)
+  if ((wallet as XRPLWallet).signTransaction) {
+    try {
+      // Autofill transaction fields
+      const autofilled = await client.autofill(accountSet);
+      // Sign with Crossmark
+      const txBlob = await (wallet as XRPLWallet).signTransaction!(autofilled);
+      // Submit with Crossmark
+      const hash = await (wallet as XRPLWallet).submitTransaction!(txBlob);
+      return hash;
+    } catch (error) {
+      throw new Error('Crossmark signing failed: ' + (error instanceof Error ? error.message : error));
+    }
+  }
+
+  // Otherwise, use seed-based wallet
   try {
     console.log('Creating DID transaction for wallet:', wallet.address);
-
-    // Use AccountSet transaction with Domain field and memo for DID verification
-    // This is more appropriate than a self-payment and won't trigger temREDUNDANT
-    const accountSet: AccountSet = {
-      TransactionType: 'AccountSet',
-      Account: wallet.address,
-      // Set a domain to indicate DID verification (optional)
-      Domain: stringToHex('microlend.did'),
-      Memos: [{
-        Memo: {
-          MemoType: stringToHex('DID_VERIFICATION'),
-          MemoData: stringToHex(JSON.stringify(didData))
-        }
-      }]
-    };
-
-    console.log('Submitting DID AccountSet transaction...');
-
-    // Use submitAndWait for better reliability
     const response: TxResponse<AccountSet> = await client.submitAndWait(accountSet, {
-      wallet,
+      wallet: wallet as Wallet,
       autofill: true
     });
-
-    console.log('DID transaction successful:', response.result.hash);
-
-    // Check if transaction was successful
     if (response.result.validated !== true) {
       throw new Error('Transaction was not validated');
     }
-
     return response.result.hash || '';
   } catch (error) {
     console.error('DID transaction failed:', error);
-
-    // Handle specific XRPL errors
     if (error instanceof Error) {
       if (error.message.includes('temREDUNDANT')) {
         throw new Error('DID already exists for this account');
@@ -390,7 +396,6 @@ export const createDIDTransaction = async (wallet: Wallet, userData: { fullName:
         throw new Error('Transaction timeout - please try again');
       }
     }
-
     throw new Error(`Failed to create DID transaction: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 };

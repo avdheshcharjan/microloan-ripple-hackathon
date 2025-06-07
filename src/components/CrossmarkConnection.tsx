@@ -54,11 +54,21 @@ export const CrossmarkConnection: React.FC<CrossmarkConnectionProps> = ({
     onConnectionStart();
 
     try {
+      // Check if Crossmark extension is installed
+      if (!sdk.sync.isConnected()) {
+        toast({
+          title: "Crossmark Not Detected",
+          description: "The Crossmark browser extension is not installed or not active. Please install or enable Crossmark and refresh the page.",
+          variant: "destructive",
+        });
+        return;
+      }
+
       console.log('Attempting to sign in with Crossmark...');
       const address = await signInAndWait();
 
       if (!address) {
-        throw new Error('Failed to get address from Crossmark');
+        throw new Error('Failed to get address from Crossmark. Make sure Crossmark is unlocked and you are signed in.');
       }
 
       // Verify session
@@ -69,8 +79,10 @@ export const CrossmarkConnection: React.FC<CrossmarkConnectionProps> = ({
 
     } catch (error) {
       console.error('Crossmark connection error:', error);
-      const errorMessage = error instanceof Error ? error.message : "Failed to connect to Crossmark";
-
+      let errorMessage = "Failed to connect to Crossmark";
+      if (error instanceof Error) {
+        errorMessage = error.message;
+      }
       toast({
         title: "Connection Failed",
         description: errorMessage,
@@ -95,8 +107,9 @@ export const CrossmarkConnection: React.FC<CrossmarkConnectionProps> = ({
       address: address,
       seed: '', // Crossmark doesn't expose seed
       balance: xrpBalance,
-      signTransaction: async (destination: string, amount: string) => {
-        return signTransaction(address, destination, amount);
+      signTransaction: async (tx: any) => {
+        const response = await sdk.async.signAndWait(tx);
+        return response.response.data.txBlob;
       },
       submitTransaction: async (txBlob: string) => {
         return submitTransaction(address, txBlob);
