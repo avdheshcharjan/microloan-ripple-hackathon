@@ -3,6 +3,7 @@ import { Header } from '@/components/Header';
 import { WelcomeSection } from '@/components/WelcomeSection';
 import { MainContent } from '@/components/MainContent';
 import { WalletSuccessPopup } from '@/components/WalletSuccessPopup';
+import { DIDSuccessPopup } from '@/components/DIDSuccessPopup';
 import { useToast } from '@/hooks/use-toast';
 import { XRPLWallet, fundLoanWithRLUSD, getAccountTransactions, checkTrustLineExists, calculateTrustScore, TrustScore } from '@/utils/xrplClient';
 import { Wallet } from 'xrpl';
@@ -11,7 +12,10 @@ import { XRPL_EXPLORER_URL } from '@/utils/constants';
 const Index = () => {
   const [userWallet, setUserWallet] = useState<XRPLWallet | null>(null);
   const [showWalletSuccessPopup, setShowWalletSuccessPopup] = useState(false);
+  const [showDIDSuccessPopup, setShowDIDSuccessPopup] = useState(false);
   const [didTransactionHash, setDidTransactionHash] = useState('');
+  const [didSuccessTxHash, setDidSuccessTxHash] = useState<string | null>(null);
+  const [didSuccessWalletAddress, setDidSuccessWalletAddress] = useState<string | null>(null);
   const [loans, setLoans] = useState<any[]>([]);
   const [recentActivity, setRecentActivity] = useState<any[]>([]);
   const [hasRLUSDTrustLine, setHasRLUSDTrustLine] = useState(false);
@@ -77,7 +81,7 @@ const Index = () => {
     console.log('Wallet created:', walletInfo);
     setUserWallet(walletInfo);
     setShowWalletSuccessPopup(true);
-    
+
     // Check trust line after wallet creation
     setTimeout(checkRLUSDTrustLine, 3000);
   };
@@ -86,7 +90,7 @@ const Index = () => {
     console.log('Wallet connected:', walletInfo);
     setUserWallet(walletInfo);
     // Skip success popup for existing wallet connections - go directly to dashboard
-    
+
     // Check trust line after wallet connection
     setTimeout(checkRLUSDTrustLine, 3000);
   };
@@ -101,12 +105,16 @@ const Index = () => {
     setLoans([]);
     setRecentActivity([]);
     setShowWalletSuccessPopup(false);
+    setShowDIDSuccessPopup(false);
     setHasRLUSDTrustLine(false);
     setUserTrustScore(null);
   };
 
   const handleDIDCreated = (txHash: string) => {
     setDidTransactionHash(txHash);
+    setDidSuccessTxHash(txHash);
+    setDidSuccessWalletAddress(userWallet?.address || null);
+    setShowDIDSuccessPopup(true);
     toast({
       title: "DID Created",
       description: "Your decentralized identity has been created successfully.",
@@ -127,15 +135,15 @@ const Index = () => {
       riskScore: userTrustScore?.risk || 'medium',
       borrower: userWallet?.address || 'You'
     };
-    
+
     setLoans([loanWithTx, ...loans]);
-    
+
     toast({
       title: "Loan NFT Created",
       description: (
         <div>
           Loan NFT created successfully!
-          <a 
+          <a
             href={txUrl}
             target="_blank"
             rel="noopener noreferrer"
@@ -185,8 +193,8 @@ const Index = () => {
         description: `RLUSD payment processed on XRPL. TX: ${txHash.slice(0, 8)}...`,
       });
 
-      setLoans(loans.map(loan => 
-        loan.id === loanId 
+      setLoans(loans.map(loan =>
+        loan.id === loanId
           ? { ...loan, fundedAmount: Math.min(loan.fundedAmount + 100, loan.amount) }
           : loan
       ));
@@ -221,13 +229,13 @@ const Index = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-green-50">
-      <Header 
+      <Header
         hasWallet={!!userWallet}
         didTransactionHash={didTransactionHash}
         walletAddress={userWallet?.address || ''}
         onLogout={handleLogout}
       />
-      
+
       {!userWallet ? (
         <WelcomeSection
           hasWallet={!!userWallet}
@@ -250,7 +258,15 @@ const Index = () => {
           onTrustLineCreated={handleTrustLineCreated}
         />
       )}
-      
+
+      {showDIDSuccessPopup && didSuccessTxHash && didSuccessWalletAddress && (
+        <DIDSuccessPopup
+          isOpen={showDIDSuccessPopup}
+          onClose={() => setShowDIDSuccessPopup(false)}
+          transactionHash={didSuccessTxHash}
+          walletAddress={didSuccessWalletAddress}
+        />
+      )}
       {showWalletSuccessPopup && userWallet && (
         <WalletSuccessPopup
           isOpen={showWalletSuccessPopup}

@@ -4,6 +4,7 @@ import { useToast } from '@/hooks/use-toast';
 import { ExternalLink } from 'lucide-react';
 import { XRPLWallet, getAccountBalances, connectXRPL } from '@/utils/xrplClient';
 import { setupRLUSDTrustLine } from '@/utils/rlusdUtils';
+import sdk from "@crossmarkio/sdk";
 
 interface CrossmarkConnectionProps {
   isConnecting: boolean;
@@ -20,163 +21,71 @@ export const CrossmarkConnection: React.FC<CrossmarkConnectionProps> = ({
 }) => {
   const { toast } = useToast();
 
-  const waitForCrossmark = async (timeout = 5000): Promise<any> => {
-    const startTime = Date.now();
-    
-    // First check if MetaMask is modifying the provider
-    if ((window as any).ethereum) {
-      console.log('MetaMask detected, checking for provider conflicts...');
+  const signInAndWait = async (): Promise<string> => {
+    try {
+      const response = await sdk.async.signInAndWait();
+      return response.response.data.address;
+    } catch (error) {
+      console.error('Sign in error:', error);
+      throw error;
     }
-    
-    while (Date.now() - startTime < timeout) {
-      // Check both window.crossmark and ethereum.crossmark
-      const crossmarkProvider = (window as any).crossmark || 
-                              ((window as any).ethereum && (window as any).ethereum.crossmark);
-      
-      if (crossmarkProvider) {
-        console.log('Crossmark provider found:', crossmarkProvider);
-        return crossmarkProvider;
-      }
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-    throw new Error('Crossmark not found after waiting');
+  };
+
+  const getUserSession = async (): Promise<string | null> => {
+    return sdk.session.user?.id || null;
+  };
+
+  const signTransaction = async (address: string, destination: string, amount: string): Promise<string> => {
+    const response = await sdk.async.signAndWait({
+      TransactionType: "Payment",
+      Account: address,
+      Destination: destination,
+      Amount: amount,
+    });
+    return response.response.data.txBlob;
+  };
+
+  const submitTransaction = async (address: string, txBlob: string): Promise<string> => {
+    const response = await sdk.async.submitAndWait(address, txBlob);
+    return response.response.data.resp.result.hash;
   };
 
   const handleConnectCrossmark = async () => {
     onConnectionStart();
 
     try {
-      console.log('Checking for wallet providers...');
-      console.log('MetaMask:', (window as any).ethereum);
-      console.log('Direct Crossmark:', (window as any).crossmark);
-      
-      const crossmark = await waitForCrossmark();
-      console.log('Crossmark instance:', crossmark);
-      
-      if (!crossmark) {
-        // Try alternative detection methods
-        console.log('Checking all window providers:', {
-          ethereum: (window as any).ethereum,
-          xrpl: (window as any).xrpl,
-          xumm: (window as any).xumm,
-          crossmark: (window as any).crossmark
-        });
-        
+      // Check if Crossmark extension is installed
+      if (!sdk.sync.isConnected()) {
         toast({
           title: "Crossmark Not Detected",
-          description: "MetaMask might be interfering with Crossmark. Try disabling MetaMask temporarily.",
+          description: "The Crossmark browser extension is not installed or not active. Please install or enable Crossmark and refresh the page.",
           variant: "destructive",
         });
-
-        const shouldTryFix = confirm(
-          "Crossmark detection issues. Please try:\n" +
-          "1. Disable MetaMask temporarily\n" +
-          "2. Refresh the page\n" +
-          "3. Enable Crossmark\n" +
-          "\nWould you like to visit the Crossmark installation page to verify your installation?"
-        );
-        
-        if (shouldTryFix) {
-          window.open('https://crossmark.io', '_blank');
-        }
         return;
       }
 
-      console.log('Crossmark found, checking API methods:', Object.keys(crossmark));
+      console.log('Attempting to sign in with Crossmark...');
+      const address = await signInAndWait();
 
-      // Add MetaMask state check
-      if ((window as any).ethereum?.isMetaMask) {
-        console.log('MetaMask is active, attempting to work alongside it...');
+      if (!address) {
+        throw new Error('Failed to get address from Crossmark. Make sure Crossmark is unlocked and you are signed in.');
       }
 
-      // Try to initialize first
-      try {
-        console.log('Attempting to initialize Crossmark...');
-        await crossmark.mount();
-        console.log('Crossmark mounted successfully');
-      } catch (error) {
-        console.log('Mount not needed or failed:', error);
-      }
+      // Verify session
+      const sessionId = await getUserSession();
+      console.log('Session ID:', sessionId);
 
-      // Try using app methods first
-      if (crossmark.app) {
-        try {
-          console.log('Using app API...');
-          const response = await crossmark.app.getAddress();
-          console.log('App response:', response);
-          
-          if (response && typeof response === 'string' && response.startsWith('r')) {
-            await handleSuccessfulConnection(response);
-            return;
-          }
-        } catch (error) {
-          console.log('App method failed:', error);
-        }
-      }
-
-      // Try using methods API
-      if (crossmark.methods) {
-        try {
-          console.log('Using methods API...');
-          const response = await crossmark.methods.address();
-          console.log('Methods response:', response);
-          
-          if (response && typeof response === 'string' && response.startsWith('r')) {
-            await handleSuccessfulConnection(response);
-            return;
-          }
-        } catch (error) {
-          console.log('Methods API failed:', error);
-        }
-      }
-
-      // Try using session
-      if (crossmark.session) {
-        try {
-          console.log('Using session API...');
-          const address = await crossmark.session.address();
-          console.log('Session address:', address);
-          
-          if (typeof address === 'string' && address.startsWith('r')) {
-            await handleSuccessfulConnection(address);
-            return;
-          }
-        } catch (error) {
-          console.log('Session API failed:', error);
-        }
-      }
-
-      // If we get here, try to connect explicitly
-      try {
-        console.log('Attempting explicit connect...');
-        const response = await crossmark.methods.connect();
-        console.log('Connect response:', response);
-        
-        if (response && typeof response === 'string' && response.startsWith('r')) {
-          await handleSuccessfulConnection(response);
-          return;
-        }
-      } catch (error) {
-        console.log('Connect attempt failed:', error);
-      }
-
-      // If we get here, no method worked
-      throw new Error(
-        'Could not connect to Crossmark. Please ensure Crossmark is unlocked and you approve the connection request in the extension popup.'
-      );
+      await handleSuccessfulConnection(address);
 
     } catch (error) {
       console.error('Crossmark connection error:', error);
-      const errorMessage = error instanceof Error ? error.message : "Failed to connect to Crossmark";
-      
-      // Add MetaMask-specific error message
-      const finalMessage = (window as any).ethereum?.isMetaMask 
-        ? `${errorMessage}. Try disabling MetaMask temporarily and refresh the page.`
-        : errorMessage;
-      
+      let errorMessage = "Failed to connect to Crossmark";
+      if (error instanceof Error) {
+        errorMessage = error.message;
+      }
       toast({
         title: "Connection Failed",
-        description: finalMessage,
+        description: errorMessage,
         variant: "destructive",
       });
     } finally {
@@ -190,14 +99,21 @@ export const CrossmarkConnection: React.FC<CrossmarkConnectionProps> = ({
 
     // Connect to XRPL and verify wallet
     await connectXRPL();
-    
+
     const balances = await getAccountBalances(address);
     const xrpBalance = balances.find(b => b.currency === 'XRP')?.value || '0';
 
     const walletInfo: XRPLWallet = {
       address: address,
       seed: '', // Crossmark doesn't expose seed
-      balance: xrpBalance
+      balance: xrpBalance,
+      signTransaction: async (tx: any) => {
+        const response = await sdk.async.signAndWait(tx);
+        return response.response.data.txBlob;
+      },
+      submitTransaction: async (txBlob: string) => {
+        return submitTransaction(address, txBlob);
+      }
     };
 
     toast({
@@ -207,7 +123,7 @@ export const CrossmarkConnection: React.FC<CrossmarkConnectionProps> = ({
 
     onWalletConnected(walletInfo);
 
-    // Auto-setup RLUSD trust line for Crossmark connections (will show manual instruction)
+    // Auto-setup RLUSD trust line for Crossmark connections
     setTimeout(() => setupRLUSDTrustLine(walletInfo, toast), 2000);
   };
 
@@ -216,7 +132,7 @@ export const CrossmarkConnection: React.FC<CrossmarkConnectionProps> = ({
       <p className="text-sm text-gray-600 text-center">
         Connect using Crossmark browser extension
       </p>
-      <Button 
+      <Button
         onClick={handleConnectCrossmark}
         disabled={isConnecting}
         className="w-full bg-green-600 hover:bg-green-700"
