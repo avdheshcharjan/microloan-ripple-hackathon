@@ -57,6 +57,7 @@ interface MainContentProps {
   hasRLUSDTrustLine: boolean;
   onTrustLineCreated: () => void;
   userBalances: AccountBalance[];
+  isDIDAppliedForLoans?: boolean;
 }
 
 export const MainContent: React.FC<MainContentProps> = ({
@@ -73,7 +74,8 @@ export const MainContent: React.FC<MainContentProps> = ({
   onTransactionUpdate,
   hasRLUSDTrustLine,
   onTrustLineCreated,
-  userBalances
+  userBalances,
+  isDIDAppliedForLoans = false
 }) => {
   const [riskFilter, setRiskFilter] = useState<'all' | 'low' | 'medium' | 'high'>('all');
   const [sortBy, setSortBy] = useState<'amount' | 'interest' | 'trustScore'>('amount');
@@ -154,6 +156,7 @@ export const MainContent: React.FC<MainContentProps> = ({
             hasRLUSDTrustLine={hasRLUSDTrustLine}
             onTrustLineCreated={onTrustLineCreated}
             userRole={userRole}
+            onDIDLoanStatusChange={onTransactionUpdate}
           />
         </TabsContent>
 
@@ -287,7 +290,7 @@ export const MainContent: React.FC<MainContentProps> = ({
           <TabsContent value="create">
             <CreateLoanForm
               onCreateLoan={onCreateLoan}
-              userDidVerified={!!didTransactionHash}
+              userDidVerified={isDIDAppliedForLoans}
               userWallet={userWallet}
             />
           </TabsContent>

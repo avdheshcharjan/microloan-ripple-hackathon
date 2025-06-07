@@ -47,18 +47,15 @@ export const SeedConnection: React.FC<SeedConnectionProps> = ({
       return;
     }
 
-    console.log('🔑 Starting seed-based connection...');
+
     onConnectionStart();
 
     try {
-      console.log('🔌 Connecting to XRPL...');
       await connectXRPL();
       
-      console.log('🔑 Creating wallet from seed...');
       const wallet = XRPLWalletClass.fromSeed(seed.trim());
-      console.log('✅ Wallet created, address:', wallet.address.slice(0, 8) + '...');
       
-      console.log('💰 Fetching account balances...');
+      // Fetching account balances...
       const balances = await getAccountBalances(wallet.address);
       const xrpBalance = balances.find(b => b.currency === 'XRP')?.value || '0';
 
@@ -68,10 +65,7 @@ export const SeedConnection: React.FC<SeedConnectionProps> = ({
         balance: xrpBalance
       };
 
-      console.log('✅ Seed connection successful:', {
-        address: wallet.address.slice(0, 8) + '...',
-        balance: xrpBalance
-      });
+      // Seed connection successful
 
       toast({
         title: "🎉 Wallet Connected Successfully",
@@ -82,7 +76,7 @@ export const SeedConnection: React.FC<SeedConnectionProps> = ({
 
       // Auto-setup RLUSD trust line for seed-based connections
       setTimeout(() => {
-        console.log('🔧 Setting up RLUSD trust line...');
+        // Setting up RLUSD trust line...
         setupRLUSDTrustLine(walletInfo, toast);
       }, 2000);
       

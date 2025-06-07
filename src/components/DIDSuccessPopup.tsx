@@ -45,7 +45,7 @@ export const DIDSuccessPopup: React.FC<DIDSuccessPopupProps> = ({
   };
 
   const handleClose = () => {
-    console.log('DID Success Popup - handleClose called');
+    // DID Success Popup closed
     onClose();
   };
 

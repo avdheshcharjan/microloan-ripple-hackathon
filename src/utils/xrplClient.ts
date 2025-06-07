@@ -4,7 +4,7 @@ import { Client, Wallet, NFTokenMint, Payment, TxResponse, TrustSet, AccountSet 
 const client = new Client('wss://s.altnet.rippletest.net:51233');
 
 // DID Creation Functions:
-// - createDIDTransactionSmart: Auto-detects wallet type and uses appropriate method
+// - createDIDTransaction: Auto-detects wallet type and uses appropriate method
 // - createDIDTransactionWithCrossmark: For Crossmark wallets (no seed available)
 // - createDIDTransaction: For seed-based wallets (has private key access)
 
@@ -76,7 +76,7 @@ const createWalletFromSeed = (seed: string): Wallet => {
   
   try {
     const wallet = Wallet.fromSeed(seed.trim());
-    console.log('✅ Successfully created wallet from seed:', wallet.address);
+  
     return wallet;
   } catch (error) {
     console.error('❌ Failed to create wallet from seed:', error);
@@ -146,10 +146,10 @@ export const createXRPLWallet = async (): Promise<XRPLWallet> => {
   
   // Fund the wallet on testnet (for demo purposes)
   try {
-    console.log('Funding wallet:', wallet.address);
     await client.fundWallet(wallet);
   } catch (error) {
-    console.log('Wallet funding might have failed, but wallet created:', error);
+    // Wallet funding might have failed, but wallet created
+    console.warn('Wallet funding failed:', error);
   }
   
   // Get account balance with retry logic
@@ -166,10 +166,10 @@ export const createXRPLWallet = async (): Promise<XRPLWallet> => {
       balance = accountInfo.result.account_data.Balance;
       break;
     } catch (error) {
-      console.log(`Could not fetch balance, retries left: ${retries - 1}`, error);
+      console.warn(`Could not fetch balance, retries left: ${retries - 1}`, error);
       retries--;
       if (retries === 0) {
-        console.log('Using default balance of 0');
+        // Using default balance of 0
       }
     }
   }
@@ -179,8 +179,7 @@ export const createXRPLWallet = async (): Promise<XRPLWallet> => {
     throw new Error('Failed to generate wallet seed');
   }
   
-  console.log('Generated wallet with seed length:', wallet.seed.length);
-  console.log('Seed starts with:', wallet.seed.substring(0, 5));
+
   
   return {
     address: wallet.address,
@@ -397,11 +396,7 @@ const checkXRPLNetworkStatus = async (): Promise<{ isConnected: boolean; ledgerI
     const serverInfo = await client.request({ command: 'server_info' });
     const ledgerIndex = serverInfo.result.info?.validated_ledger?.seq;
     
-    console.log('🌐 XRPL Network Status:', {
-      connected: client.isConnected(),
-      ledgerIndex,
-      networkId: serverInfo.result.info?.network_id
-    });
+    // Network status check passed
     
     return { 
       isConnected: true, 
@@ -423,7 +418,7 @@ export const createDIDTransaction = async (
 ): Promise<string> => {
   await connectXRPL();
 
-  console.log('🔍 Creating DID transaction for:', walletInfo.address);
+
   
   // Create DID data
   const didData = {
@@ -468,7 +463,7 @@ const createDIDWithCrossmark = async (address: string, didData: any): Promise<st
   for (const method of methods) {
     if (crossmark.methods?.[method]) {
       try {
-        console.log(`🔄 Trying ${method}...`);
+  
         
         if (method === 'submit') {
           await crossmark.methods[method](transaction);
@@ -487,7 +482,7 @@ const createDIDWithCrossmark = async (address: string, didData: any): Promise<st
           return await extractTransactionHash(response, address);
         }
       } catch (error) {
-        console.log(`❌ ${method} failed:`, error);
+        console.warn(`${method} failed:`, error);
         if (error instanceof Error && !error.message.includes('TIMEOUT')) {
           throw error; // Don't retry on non-timeout errors
         }
@@ -540,8 +535,6 @@ const extractTransactionHash = async (response: any, address: string): Promise<s
   for (const path of hashPaths) {
     const hash = getNestedProperty(response, path);
     if (hash && /^[A-F0-9]{64}$/i.test(hash)) {
-      console.log(`✅ Found valid hash at ${path}:`, hash);
-      
       // Verify the hash immediately
       if (await getDIDTransactionByHash(hash)) {
         return hash;
@@ -550,7 +543,6 @@ const extractTransactionHash = async (response: any, address: string): Promise<s
   }
   
   // Fallback to transaction search
-  console.log('🔍 No valid hash found, searching recent transactions...');
   return await findRecentDIDTransaction(address);
 };
 
@@ -562,9 +554,8 @@ const getNestedProperty = (obj: any, path: string): any => {
 // Helper function to find recent DID transaction
 const findRecentDIDTransaction = async (address: string): Promise<string> => {
   try {
-    console.log('🔍 Searching for recent DID transaction...');
-    
-    await new Promise(resolve => setTimeout(resolve, 3000));
+    // Wait for transaction to be processed by the ledger
+    await new Promise(resolve => setTimeout(resolve, 5000));
     
     const recentTxResponse = await client.request({
       command: 'account_tx',
@@ -577,7 +568,11 @@ const findRecentDIDTransaction = async (address: string): Promise<string> => {
     const transactions = recentTxResponse.result.transactions || [];
     
     for (const txWrapper of transactions) {
-      const transaction = (txWrapper as any).tx || (txWrapper as any).transaction || txWrapper;
+      // Handle different response structures from XRPL
+      const transaction = (txWrapper as any).tx_json || (txWrapper as any).tx || (txWrapper as any).transaction || txWrapper;
+      
+      // Extract hash from multiple possible locations
+      const txHash = transaction?.hash || (txWrapper as any).hash || (txWrapper as any).tx?.hash;
       
       if (transaction?.TransactionType === 'AccountSet' && transaction?.Memos) {
         const hasDIDMemo = transaction.Memos.some((memo: any) => {
@@ -589,9 +584,8 @@ const findRecentDIDTransaction = async (address: string): Promise<string> => {
           }
         });
         
-        if (hasDIDMemo && transaction.hash && /^[A-F0-9]{64}$/i.test(transaction.hash)) {
-          console.log('✅ Found DID transaction:', transaction.hash);
-          return transaction.hash;
+        if (hasDIDMemo && txHash && /^[A-F0-9]{64}$/i.test(txHash)) {
+          return txHash;
         }
       }
     }
@@ -602,14 +596,7 @@ const findRecentDIDTransaction = async (address: string): Promise<string> => {
   }
 };
 
-// Smart DID creation function that automatically chooses the right method
-export const createDIDTransactionSmart = async (
-  walletInfo: XRPLWallet, 
-  userData: { fullName: string; phone: string }
-): Promise<string> => {
-  // Use the new unified function
-  return createDIDTransaction(walletInfo, userData);
-};
+
 
 // Create microloan as NFT
 export const createMicroloanNFT = async (
@@ -732,7 +719,7 @@ export const getAccountNFTs = async (address: string): Promise<any[]> => {
     });
     return response.result.account_nfts || [];
   } catch (error) {
-    console.log('Could not fetch NFTs:', error);
+    console.warn('Could not fetch NFTs:', error);
     return [];
   }
 };
@@ -753,8 +740,6 @@ export const calculateTrustScore = async (address: string): Promise<TrustScore> 
   await connectXRPL();
   
   try {
-    console.log('🔍 Calculating Trust Score for address:', address);
-    
     // Fetch account transactions to analyze
     const transactionsResponse = await client.request({
       command: 'account_tx',
@@ -768,18 +753,16 @@ export const calculateTrustScore = async (address: string): Promise<TrustScore> 
     let score = 0;
     let hasDID = false;
     const transactionCount = transactions.length;
-    
-    console.log('📊 Found', transactionCount, 'transactions');
 
     // Check for DID verification in multiple ways (+10 points)
     // 1. Check for AccountSet transactions with DID_VERIFICATION memo (new method)
     // 2. Check for Payment transactions with DID_VERIFICATION memo (old method)
     // 3. Check account domain for microlend.did
     let didTransaction = transactions.find((tx: any) => {
-      const txType = tx.tx?.TransactionType;
-      const memos = tx.tx?.Memos || [];
-      
-      console.log('🔍 Checking transaction type:', txType, 'with', memos.length, 'memos');
+      // Handle different response structures from XRPL
+      const transaction = tx.tx_json || tx.tx || tx.transaction || tx;
+      const txType = transaction?.TransactionType;
+      const memos = transaction?.Memos || [];
       
       // Check for DID verification memo in AccountSet or Payment transactions
       const hasDIDMemo = memos.some((memo: any) => {
@@ -787,7 +770,6 @@ export const calculateTrustScore = async (address: string): Promise<TrustScore> 
           const memoType = memo.Memo?.MemoType;
           if (memoType) {
             const decodedType = hexToString(memoType);
-            console.log('📝 Found memo type:', decodedType);
             return decodedType === 'DID_VERIFICATION';
           }
           return false;
@@ -796,15 +778,8 @@ export const calculateTrustScore = async (address: string): Promise<TrustScore> 
         }
       });
       
-      if ((txType === 'AccountSet' || txType === 'Payment') && hasDIDMemo) {
-        console.log('✅ Found DID transaction:', txType, 'with DID memo');
-        return true;
-      }
-      
-      return false;
+      return (txType === 'AccountSet' || txType === 'Payment') && hasDIDMemo;
     });
-    
-    console.log('🔍 DID transaction found in history:', !!didTransaction);
 
     // Add points for transaction history (+1 per 10 transactions, max +20)
     const transactionPoints = Math.min(Math.floor(transactionCount / 10), 20);
@@ -823,37 +798,29 @@ export const calculateTrustScore = async (address: string): Promise<TrustScore> 
       
       // Check for microlend domain (DID verification)
       const domain = accountInfo.result.account_data.Domain;
-      console.log('🌐 Account domain:', domain);
       if (domain) {
         const decodedDomain = hexToString(domain);
-        console.log('🌐 Decoded domain:', decodedDomain);
         if (decodedDomain === 'microlend.did') {
           hasDomainDID = true;
-          console.log('✅ Domain-based DID found!');
         }
       }
       
       // Calculate approximate account age based on sequence number
       const sequence = accountInfo.result.account_data.Sequence || 0;
-      console.log('📅 Account sequence:', sequence);
       if (sequence > 0) {
         accountAge = sequence; // Store sequence as proxy for age
         // Small bonus for older accounts (up to +5 points)
         const ageBonus = Math.min(Math.floor(sequence / 50), 5);
-        console.log('🎁 Age bonus:', ageBonus);
         score += ageBonus;
       }
     } catch (error) {
-      console.log('Could not fetch account info:', error);
+      // Account info not available - continue without age bonus
     }
 
     // Final DID check - either transaction-based or domain-based
     if (didTransaction || hasDomainDID) {
       hasDID = true;
       score += 10;
-      console.log('✅ DID verified! Adding 10 points. New score:', score);
-    } else {
-      console.log('❌ No DID found. Score remains:', score);
     }
 
     // Determine risk level after all calculations
@@ -865,12 +832,6 @@ export const calculateTrustScore = async (address: string): Promise<TrustScore> 
     } else {
       risk = 'high';
     }
-
-    console.log('🎯 Final Trust Score:', {
-      score,
-      risk,
-      factors: { hasDID, transactionCount, accountAge }
-    });
 
     return {
       score,
@@ -902,161 +863,54 @@ export const disconnectXRPL = async (): Promise<void> => {
   }
 };
 
-// Comprehensive diagnostic function (combines testing and diagnostics)
-export const diagnoseCrossmarkDID = async (address: string): Promise<{ 
-  canCreateDID: boolean; 
-  issues: string[]; 
-  recommendations: string[];
-  preferredMethod?: string;
-  availableMethods: string[];
-}> => {
-  const issues: string[] = [];
-  const recommendations: string[] = [];
-  let availableMethods: string[] = [];
-  let preferredMethod = '';
-  
+
+
+// Function to retrieve DID data from the most recent DID transaction
+export const getCurrentDIDData = async (address: string): Promise<{name: string; phone: string; timestamp: number} | null> => {
   try {
-    // Test Crossmark availability and methods
-    const crossmark = (window as any).crossmark;
-    
-    if (!crossmark) {
-      issues.push('Crossmark extension not found');
-      recommendations.push('Install Crossmark extension from crossmark.io');
-      return { canCreateDID: false, issues, recommendations, availableMethods };
-    }
-
-    availableMethods = Object.keys(crossmark.methods || {});
-    
-    // Determine preferred method
-    if (availableMethods.includes('signAndSubmitAndWait')) {
-      preferredMethod = 'signAndSubmitAndWait';
-    } else if (availableMethods.includes('submitAndWait')) {
-      preferredMethod = 'submitAndWait';
-      issues.push('Optimal method not available');
-      recommendations.push('Update Crossmark extension for better performance');
-    } else if (availableMethods.includes('submit')) {
-      preferredMethod = 'submit';
-      issues.push('Only basic methods available');
-      recommendations.push('Update Crossmark extension for better transaction support');
-    } else {
-      issues.push('No transaction methods found');
-      recommendations.push('Reinstall Crossmark extension');
-    }
-
-    // Test connectivity
-    try {
-      if (crossmark.methods?.getAddress) {
-        await crossmark.methods.getAddress();
-      }
-    } catch (error) {
-      issues.push('Crossmark connectivity failed');
-      recommendations.push('Unlock Crossmark and reconnect wallet');
-    }
-    
-    // Check XRPL connection
     await connectXRPL();
-    if (!client.isConnected()) {
-      issues.push('XRPL network connection failed');
-      recommendations.push('Check internet connection');
-    }
     
-    // Check existing DID
-    const trustScore = await calculateTrustScore(address);
-    if (trustScore.factors.hasDID) {
-      issues.push('DID already exists');
-      recommendations.push('DID verification already completed');
-      return { canCreateDID: false, issues, recommendations, preferredMethod, availableMethods };
-    }
+    const recentTxResponse = await client.request({
+      command: 'account_tx',
+      account: address,
+      limit: 50, // Check more transactions to find the most recent DID
+      ledger_index_min: -1,
+      ledger_index_max: -1
+    });
     
-    // Check balance
-    const balances = await getAccountBalances(address);
-    const xrpBalance = parseFloat(balances.find(b => b.currency === 'XRP')?.value || '0');
+    const transactions = recentTxResponse.result.transactions || [];
     
-    if (xrpBalance < 1) {
-      issues.push('Insufficient XRP balance');
-      recommendations.push('Add at least 1 XRP for transaction fees');
-    }
-    
-    // Final assessment
-    const canCreateDID = !issues.some(issue => 
-      issue.includes('Insufficient XRP') || 
-      issue.includes('XRPL network') ||
-      issue.includes('DID already exists') ||
-      issue.includes('No transaction methods')
-    );
-    
-    if (canCreateDID) {
-      recommendations.push(`Ready to create DID using ${preferredMethod}`);
-    }
-    
-    return { canCreateDID, issues, recommendations, preferredMethod, availableMethods };
-    
-  } catch (error) {
-    issues.push(`Diagnostic failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    recommendations.push('Refresh page and try again');
-    return { canCreateDID: false, issues, recommendations, preferredMethod, availableMethods };
-  }
-};
-
-// Fallback DID creation using simple payment method
-export const createDIDWithSimplePayment = async (
-  address: string, 
-  userData: { fullName: string; phone: string }
-): Promise<string> => {
-  await connectXRPL();
-
-  const crossmark = (window as any).crossmark;
-  
-  if (!crossmark) {
-    throw new Error('Crossmark wallet not found.');
-  }
-
-  console.log('🔄 Using simple payment fallback method for DID creation');
-
-  // Create DID data
-  const didData = {
-    name: userData.fullName,
-    phone: userData.phone,
-    timestamp: Date.now(),
-    verified: true,
-    method: 'simple_payment_fallback'
-  };
-
-  try {
-    // Simple self-payment with DID memo (minimal amount)
-    const paymentTx = {
-      TransactionType: 'Payment',
-      Account: address,
-      Destination: address,
-      Amount: '1', // 1 drop (0.000001 XRP)
-      Memos: [{
-        Memo: {
-          MemoType: stringToHex('DID_VERIFICATION'),
-          MemoData: stringToHex(JSON.stringify(didData))
+    for (const txWrapper of transactions) {
+      const transaction = (txWrapper as any).tx_json || (txWrapper as any).tx || (txWrapper as any).transaction || txWrapper;
+      
+      if (transaction?.TransactionType === 'AccountSet' && transaction?.Memos) {
+        const didMemo = transaction.Memos.find((memo: any) => {
+          try {
+            const memoType = hexToString(memo.Memo?.MemoType || '');
+            return memoType === 'DID_VERIFICATION';
+          } catch {
+            return false;
+          }
+        });
+        
+        if (didMemo?.Memo?.MemoData) {
+          try {
+            const didData = JSON.parse(hexToString(didMemo.Memo.MemoData));
+            return {
+              name: didData.name || '',
+              phone: didData.phone || '',
+              timestamp: didData.timestamp || 0
+            };
+          } catch {
+            continue; // Skip malformed data, continue searching
+          }
         }
-      }]
-    };
-
-    console.log('📝 Prepared simple payment DID transaction:', paymentTx);
-
-    // Use the same method priority as main function
-    if (crossmark.methods?.signAndSubmitAndWait) {
-      const response = await crossmark.methods.signAndSubmitAndWait(paymentTx);
-      return extractTransactionHash(response, address);
-    } else if (crossmark.methods?.submitAndWait) {
-      const response = await crossmark.methods.submitAndWait(paymentTx);
-      return extractTransactionHash(response, address);
-    } else if (crossmark.methods?.submit) {
-      await crossmark.methods.submit(paymentTx);
-      await new Promise(resolve => setTimeout(resolve, 3000));
-      return await findRecentDIDTransaction(address);
+      }
     }
-
-    throw new Error('No suitable Crossmark methods available for fallback');
-
+    
+    return null; // No DID data found
   } catch (error) {
-    console.error('❌ Simple payment DID fallback failed:', error);
-    throw new Error(`Fallback DID creation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    return null;
   }
 };
 
@@ -1065,11 +919,8 @@ export const getDIDTransactionByHash = async (txHash: string): Promise<boolean> 
   try {
     await connectXRPL();
     
-    console.log('🔍 Verifying DID transaction with hash:', txHash);
-    
     // Validate hash format
     if (!/^[A-F0-9]{64}$/i.test(txHash)) {
-      console.log('❌ Invalid transaction hash format');
       return false;
     }
     
@@ -1080,67 +931,253 @@ export const getDIDTransactionByHash = async (txHash: string): Promise<boolean> 
       binary: false
     });
     
-    const txResult = txResponse.result as any; // Type assertion for XRPL response
-    console.log('📄 Transaction details:', txResult);
-    
-    // The actual transaction data is in tx_json property for 'tx' command responses
+    const txResult = txResponse.result as any;
     const transaction = txResult.tx_json || txResult;
-    console.log('📄 Extracted transaction data:', transaction);
     
-    // Check if it's a validated transaction with DID memo
-    if (txResult.validated !== true) {
-      console.log('❌ Transaction not validated');
+    // Check if it's a validated AccountSet transaction with DID memo
+    if (txResult.validated !== true || transaction.TransactionType !== 'AccountSet') {
       return false;
     }
-    
-    if (transaction.TransactionType !== 'AccountSet') {
-      console.log(`❌ Not an AccountSet transaction, found: ${transaction.TransactionType}`);
-      return false;
-    }
-    
-    console.log('✅ Found AccountSet transaction');
     
     // Check for DID verification memo
     const memos = transaction.Memos || [];
-    console.log(`📝 Found ${memos.length} memos in transaction`);
-    
     const hasDIDMemo = memos.some((memo: any) => {
       try {
         const memoType = hexToString(memo.Memo?.MemoType || '');
-        console.log(`📝 Checking memo type: "${memoType}"`);
         return memoType === 'DID_VERIFICATION';
-      } catch (error) {
-        console.log('⚠️ Failed to decode memo type:', error);
+      } catch {
         return false;
       }
     });
     
-    if (hasDIDMemo) {
-      console.log('✅ Valid DID transaction confirmed');
-      
-      // Try to extract and log the DID data
-      try {
-        const didMemo = memos.find((memo: any) => {
-          const memoType = hexToString(memo.Memo?.MemoType || '');
-          return memoType === 'DID_VERIFICATION';
-        });
-        
-        if (didMemo?.Memo?.MemoData) {
-          const didData = JSON.parse(hexToString(didMemo.Memo.MemoData));
-          console.log('📋 DID Data found:', didData);
-        }
-      } catch (error) {
-        console.log('⚠️ Could not parse DID data, but transaction is valid:', error);
-      }
-      
-      return true;
-    } else {
-      console.log('❌ No DID verification memo found');
-      return false;
-    }
+    return hasDIDMemo;
     
   } catch (error) {
-    console.error('❌ Failed to verify transaction:', error);
+    return false;
+  }
+};
+
+// Function to apply/activate existing DID for loan NFT creation
+export const applyDIDForLoans = async (address: string, walletSeed?: string): Promise<string> => {
+  try {
+    await connectXRPL();
+    
+    // First, verify that a DID exists
+    const existingDID = await getCurrentDIDData(address);
+    if (!existingDID) {
+      throw new Error('No existing DID found. Please create a DID first.');
+    }
+    
+    // Check if we have a Crossmark wallet or seed-based wallet
+    const crossmark = (window as any).crossmark;
+    
+    // For Crossmark wallets, we detect them by having no seed and Crossmark being available
+    const isCrossmarkWallet = !walletSeed && crossmark;
+    
+    // Prioritize Crossmark wallet if available, then fall back to seed-based
+    if (isCrossmarkWallet) {
+      return applyDIDWithCrossmark(address, existingDID);
+    } else if (walletSeed && walletSeed.trim() !== '') {
+      return applyDIDWithSeed(walletSeed, existingDID);
+    } else {
+      throw new Error('No valid wallet method available. Please ensure you have either Crossmark connected or a valid seed.');
+    }
+  } catch (error) {
+    console.error('Failed to apply DID for loans:', error);
+    throw error;
+  }
+};
+
+// Apply DID using Crossmark
+const applyDIDWithCrossmark = async (address: string, didData: any): Promise<string> => {
+  const crossmark = (window as any).crossmark;
+  
+  if (!crossmark) {
+    throw new Error('Crossmark wallet not found. Please ensure Crossmark extension is installed and active.');
+  }
+
+  // Create a loan application transaction that references the existing DID
+  const loanApplicationData = {
+    type: 'LOAN_DID_APPLICATION',
+    didTimestamp: didData.timestamp,
+    name: didData.name,
+    phone: didData.phone,
+    appliedAt: Date.now(),
+    purpose: 'Enable loan NFT creation with verified DID'
+  };
+
+  const transaction = {
+    TransactionType: 'AccountSet',
+    Account: address,
+    Memos: [{
+      Memo: {
+        MemoType: stringToHex('LOAN_DID_APPLICATION'),
+        MemoData: stringToHex(JSON.stringify(loanApplicationData))
+      }
+    }]
+  };
+
+  // Try methods in order of preference
+  const methods = ['signAndSubmitAndWait', 'submitAndWait', 'submit'];
+  
+  for (const method of methods) {
+    if (crossmark.methods?.[method]) {
+      try {
+  
+        
+        if (method === 'submit') {
+          await crossmark.methods[method](transaction);
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          return await findRecentLoanApplicationTransaction(address);
+        } else {
+          const timeoutPromise = new Promise<never>((_, reject) => {
+            setTimeout(() => reject(new Error('TIMEOUT')), 30000);
+          });
+          
+          const response = await Promise.race([
+            crossmark.methods[method](transaction),
+            timeoutPromise
+          ]);
+          
+          return await extractTransactionHash(response, address);
+        }
+      } catch (error) {
+        console.warn(`${method} failed:`, error);
+        if (error instanceof Error && !error.message.includes('TIMEOUT')) {
+          throw error;
+        }
+        continue;
+      }
+    }
+  }
+  
+  throw new Error('No suitable Crossmark methods available. Please update your Crossmark extension.');
+};
+
+// Apply DID using seed-based wallet
+const applyDIDWithSeed = async (seed: string, didData: any): Promise<string> => {
+  if (!isValidXRPLSeed(seed)) {
+    throw new Error('Invalid XRPL seed format.');
+  }
+  
+  const wallet = createWalletFromSeed(seed);
+  
+  // Create a loan application transaction that references the existing DID
+  const loanApplicationData = {
+    type: 'LOAN_DID_APPLICATION',
+    didTimestamp: didData.timestamp,
+    name: didData.name,
+    phone: didData.phone,
+    appliedAt: Date.now(),
+    purpose: 'Enable loan NFT creation with verified DID'
+  };
+
+  const accountSet: AccountSet = {
+    TransactionType: 'AccountSet',
+    Account: wallet.address,
+    Memos: [{
+      Memo: {
+        MemoType: stringToHex('LOAN_DID_APPLICATION'),
+        MemoData: stringToHex(JSON.stringify(loanApplicationData))
+      }
+    }]
+  };
+  
+  const response = await client.submitAndWait(accountSet, { wallet, autofill: true });
+  
+  if (response.result.validated !== true) {
+    throw new Error('Transaction was not validated');
+  }
+  
+  return response.result.hash || '';
+};
+
+// Helper function to find recent loan application transaction
+const findRecentLoanApplicationTransaction = async (address: string): Promise<string> => {
+  await connectXRPL();
+  
+  for (let attempt = 0; attempt < 10; attempt++) {
+    try {
+      const recentTxResponse = await client.request({
+        command: 'account_tx',
+        account: address,
+        limit: 10,
+        ledger_index_min: -1,
+        ledger_index_max: -1
+      });
+
+      const transactions = recentTxResponse.result.transactions || [];
+      
+      for (const txWrapper of transactions) {
+        const transaction = (txWrapper as any).tx_json || (txWrapper as any).tx || (txWrapper as any).transaction || txWrapper;
+        
+        if (transaction?.TransactionType === 'AccountSet' && transaction?.Memos) {
+          const loanAppMemo = transaction.Memos.find((memo: any) => {
+            try {
+              const memoType = hexToString(memo.Memo?.MemoType || '');
+              return memoType === 'LOAN_DID_APPLICATION';
+            } catch {
+              return false;
+            }
+          });
+          
+          if (loanAppMemo) {
+            const hash = transaction?.hash || (txWrapper as any).hash || (txWrapper as any).tx?.hash;
+            if (hash) {
+              return hash;
+            }
+          }
+        }
+      }
+      
+              // Transaction not found yet, retrying...
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    } catch (error) {
+      console.error(`Error in attempt ${attempt + 1}:`, error);
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+  }
+  
+  throw new Error('Failed to find loan application transaction after multiple attempts');
+};
+
+// Function to check if DID has been applied for loans
+export const isDIDAppliedForLoans = async (address: string): Promise<boolean> => {
+  try {
+    await connectXRPL();
+    
+    const recentTxResponse = await client.request({
+      command: 'account_tx',
+      account: address,
+      limit: 50,
+      ledger_index_min: -1,
+      ledger_index_max: -1
+    });
+    
+    const transactions = recentTxResponse.result.transactions || [];
+    
+    for (const txWrapper of transactions) {
+      const transaction = (txWrapper as any).tx_json || (txWrapper as any).tx || (txWrapper as any).transaction || txWrapper;
+      
+      if (transaction?.TransactionType === 'AccountSet' && transaction?.Memos) {
+        const loanAppMemo = transaction.Memos.find((memo: any) => {
+          try {
+            const memoType = hexToString(memo.Memo?.MemoType || '');
+            return memoType === 'LOAN_DID_APPLICATION';
+          } catch {
+            return false;
+          }
+        });
+        
+        if (loanAppMemo) {
+          return true;
+        }
+      }
+    }
+    
+    return false;
+  } catch (error) {
+    console.error('Error checking DID loan application:', error);
     return false;
   }
 };

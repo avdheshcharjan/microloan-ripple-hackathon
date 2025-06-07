@@ -28,7 +28,7 @@ export const CrossmarkConnection: React.FC<CrossmarkConnectionProps> = ({
                                ((window as any).ethereum && (window as any).ethereum.crossmark);
       
       if (crossmarkProvider) {
-        console.log('✅ Crossmark provider found');
+  
         return crossmarkProvider;
       }
       
@@ -39,7 +39,7 @@ export const CrossmarkConnection: React.FC<CrossmarkConnectionProps> = ({
   };
 
   const handleConnectCrossmark = async () => {
-    console.log('🚀 Starting Crossmark connection...');
+
     onConnectionStart();
 
     try {
@@ -64,7 +64,7 @@ export const CrossmarkConnection: React.FC<CrossmarkConnectionProps> = ({
         throw new Error('Crossmark connect method not available');
       }
 
-      console.log('🔌 Connecting to Crossmark...');
+
       const connectResponse = await crossmark.methods.connect();
       
       if (connectResponse !== true) {
@@ -76,7 +76,7 @@ export const CrossmarkConnection: React.FC<CrossmarkConnectionProps> = ({
         throw new Error('Crossmark signInAndWait method not available');
       }
 
-      console.log('🔐 Signing in to get user address...');
+      
       const signInResult = await crossmark.methods.signInAndWait();
       
       // Extract address from the response
@@ -93,7 +93,7 @@ export const CrossmarkConnection: React.FC<CrossmarkConnectionProps> = ({
         throw new Error('Failed to retrieve wallet address from Crossmark');
       }
 
-      console.log('✅ Successfully connected and retrieved address');
+      
       await handleSuccessfulConnection(address, 'Crossmark signInAndWait');
       return;
 
@@ -174,7 +174,7 @@ export const CrossmarkConnection: React.FC<CrossmarkConnectionProps> = ({
         balance: xrpBalance
       };
 
-      console.log('✅ Wallet connected:', address.slice(0, 8) + '...', xrpBalance, 'XRP');
+
 
       toast({
         title: "🎉 Wallet Connected Successfully",

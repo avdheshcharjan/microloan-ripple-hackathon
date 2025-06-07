@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
 import { TrendingUp, DollarSign, Users, Clock, ArrowUpRight, ArrowDownLeft, Wallet, Shield, User, Copy, ExternalLink, Hash, Star, Loader2, Plus, AlertCircle, CheckCircle } from 'lucide-react';
 import { 
@@ -12,9 +13,9 @@ import {
   createDIDTransaction, 
   calculateTrustScore, 
   TrustScore, 
-  diagnoseCrossmarkDID, 
-  createDIDWithSimplePayment,
-  getDIDTransactionByHash,
+  getCurrentDIDData,
+  applyDIDForLoans,
+  isDIDAppliedForLoans,
   getAccountBalances, 
   sendXRPPayment, 
   sendRLUSDPayment, 
@@ -51,6 +52,7 @@ interface DashboardProps {
   hasRLUSDTrustLine: boolean;
   onTrustLineCreated: () => void;
   userRole?: 'borrower' | 'lender';
+  onDIDLoanStatusChange?: (isApplied: boolean) => void;
 }
 
 export const Dashboard: React.FC<DashboardProps> = ({ 
@@ -63,17 +65,20 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onTransactionUpdate,
   hasRLUSDTrustLine,
   onTrustLineCreated,
-  userRole = 'borrower'
+  userRole = 'borrower',
+  onDIDLoanStatusChange
 }) => {
   const [isCreatingDID, setIsCreatingDID] = useState(false);
   const [didData, setDidData] = useState({ fullName: '', phone: '' });
   const [trustScore, setTrustScore] = useState<TrustScore | null>(null);
   const [isLoadingTrustScore, setIsLoadingTrustScore] = useState(false);
-  const [showDiagnostics, setShowDiagnostics] = useState(false);
-  const [diagnostics, setDiagnostics] = useState<{ canCreateDID: boolean; issues: string[]; recommendations: string[] } | null>(null);
+  const [currentDIDData, setCurrentDIDData] = useState<{name: string; phone: string; timestamp: number} | null>(null);
+  const [showCurrentDID, setShowCurrentDID] = useState(false);
+  const [isDIDAppliedForLoansState, setIsDIDAppliedForLoansState] = useState(false);
+  const [isApplyingDID, setIsApplyingDID] = useState(false);
   const { toast } = useToast();
 
-  // Fetch user's Trust Score
+  // Fetch user's Trust Score and DID loan application status
   useEffect(() => {
     const fetchUserTrustScore = async () => {
       if (!userWallet) return;
@@ -89,8 +94,23 @@ export const Dashboard: React.FC<DashboardProps> = ({
       }
     };
 
+    const checkDIDLoanApplicationStatus = async () => {
+      if (!userWallet) return;
+      
+      try {
+        const isApplied = await isDIDAppliedForLoans(userWallet.address);
+        setIsDIDAppliedForLoansState(isApplied);
+        onDIDLoanStatusChange?.(isApplied);
+      } catch (error) {
+        console.error('Error checking DID loan application status:', error);
+      }
+    };
+
     fetchUserTrustScore();
+    checkDIDLoanApplicationStatus();
   }, [userWallet, didTransactionHash]); // Re-fetch when DID is created
+
+
 
   const copyToClipboard = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
@@ -131,38 +151,21 @@ export const Dashboard: React.FC<DashboardProps> = ({
         setTimeout(() => reject(new Error('DASHBOARD_TIMEOUT: Transaction timed out')), timeoutDuration);
       });
       
-      // Show different message for Crossmark users and test connection
+      // Show different message for Crossmark users
       if (!userWallet.seed || userWallet.seed.trim() === '') {
-        // Test Crossmark connection first
-        try {
-          const diagnosticResult = await diagnoseCrossmarkDID(userWallet.address);
-          console.log('🔍 Crossmark diagnostic test:', diagnosticResult);
-          
-          if (!diagnosticResult.canCreateDID) {
-            throw new Error(diagnosticResult.issues.join(', '));
-          }
-          
+        toast({
+          title: "Crossmark Transaction",
+          description: "Please check Crossmark extension and approve the DID transaction. Look for popup windows!",
+        });
+        
+        // Add a reminder toast after 10 seconds
+        setTimeout(() => {
           toast({
-            title: "Crossmark Transaction",
-            description: "Please check Crossmark extension and approve the DID transaction. Look for popup windows!",
+            title: "Still Waiting for Approval",
+            description: "Check for Crossmark popup windows or click the Crossmark extension icon to find pending transactions.",
+            variant: "default",
           });
-          
-          // Add a reminder toast after 10 seconds
-          setTimeout(() => {
-            toast({
-              title: "Still Waiting for Approval",
-              description: "Check for Crossmark popup windows or click the Crossmark extension icon to find pending transactions.",
-              variant: "default",
-            });
-          }, 10000);
-        } catch (testError) {
-          console.error('Crossmark test failed:', testError);
-          toast({
-            title: "Crossmark Issue",
-            description: "Please ensure Crossmark is installed, unlocked, and connected. Attempting transaction anyway...",
-            variant: "destructive",
-          });
-        }
+        }, 10000);
       }
       
       // Use smart DID creation that handles both Crossmark and seed-based wallets
@@ -225,127 +228,92 @@ export const Dashboard: React.FC<DashboardProps> = ({
     }
   };
 
-  const runDiagnostics = async () => {
-    if (!userWallet) return;
-    
-    setShowDiagnostics(true);
-    try {
-      const result = await diagnoseCrossmarkDID(userWallet.address);
-      setDiagnostics(result);
-    } catch (error) {
-      console.error('Diagnostics failed:', error);
-      setDiagnostics({
-        canCreateDID: false,
-        issues: ['Diagnostic check failed'],
-        recommendations: ['Try refreshing the page and reconnecting wallet']
-      });
-    }
-  };
 
-  const testCrossmarkMethodsLocal = async () => {
-    if (!userWallet) return;
-    
-    try {
-      const testResult = await diagnoseCrossmarkDID(userWallet.address);
-      console.log('🔍 Crossmark methods test:', testResult);
-      
-      toast({
-        title: "Crossmark Test Results",
-        description: `Available methods: ${testResult.availableMethods.join(', ')}. Preferred: ${testResult.preferredMethod || 'none'}`,
-        variant: testResult.canCreateDID ? "default" : "destructive",
-      });
-      
-      if (testResult.issues.length > 0) {
-        console.log('⚠️ Issues found:', testResult.issues);
-        console.log('💡 Recommendations:', testResult.recommendations);
-      }
-    } catch (error) {
-      console.error('Method test failed:', error);
-      toast({
-        title: "Test Failed",
-        description: "Could not test Crossmark methods",
-        variant: "destructive",
-      });
-    }
-  };
 
-  const trySimplePaymentDID = async () => {
+
+
+  const viewCurrentDID = async () => {
     if (!userWallet) return;
 
-    if (!didData.fullName.trim() || !didData.phone.trim()) {
-      toast({
-        title: "Missing Information",
-        description: "Please fill in both name and phone number.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    setIsCreatingDID(true);
-    
-    toast({
-      title: "Trying Fallback Method",
-      description: "Using simple payment method for DID creation...",
-    });
-
-    try {
-      const txHash = await createDIDWithSimplePayment(userWallet.address, didData);
-      
-      toast({
-        title: "DID Created (Fallback)",
-        description: "Your DID was created using the fallback method.",
-      });
-
-      onDIDCreated?.(txHash);
-      setDidData({ fullName: '', phone: '' });
-      
-    } catch (error) {
-      console.error('Fallback DID creation failed:', error);
-      toast({
-        title: "Fallback Failed",
-        description: error instanceof Error ? error.message : "Fallback method also failed",
-        variant: "destructive",
-      });
-    } finally {
-      setIsCreatingDID(false);
-    }
-  };
-
-  const testExistingTransaction = async () => {
-    const testTxHash = 'D36C26B7340AA83A58BAFFE66A696D0BBB6B75EFC9ECF41B460EB91FD1EA303F';
-    
     try {
       toast({
-        title: "Testing Transaction",
-        description: "Verifying the successful DID transaction...",
+        title: "Retrieving DID Data",
+        description: "Loading your current DID information...",
       });
 
-      const isValid = await getDIDTransactionByHash(testTxHash);
+      const didData = await getCurrentDIDData(userWallet.address);
       
-      if (isValid) {
+      if (didData) {
+        setCurrentDIDData(didData);
+        setShowCurrentDID(true);
         toast({
-          title: "✅ Transaction Verified!",
-          description: "Your DID transaction was successful. The frontend parsing has been fixed.",
+          title: "DID Data Retrieved",
+          description: "Your current DID information has been loaded.",
         });
-        
-        // If this is the user's transaction, trigger the DID created callback
-        if (userWallet && testTxHash) {
-          onDIDCreated?.(testTxHash);
-        }
       } else {
         toast({
-          title: "❌ Transaction Invalid",
-          description: "The transaction was found but doesn't contain valid DID data.",
+          title: "No DID Found",
+          description: "No DID information found for this wallet.",
           variant: "destructive",
         });
       }
     } catch (error) {
-      console.error('Transaction verification failed:', error);
       toast({
-        title: "Verification Failed",
-        description: "Could not verify the transaction. Check console for details.",
+        title: "Retrieval Failed",
+        description: "Could not retrieve DID data. Please try again.",
         variant: "destructive",
       });
+    }
+  };
+
+  const handleApplyDIDForLoans = async () => {
+    if (!userWallet) return;
+
+    setIsApplyingDID(true);
+
+    try {
+      toast({
+        title: "Applying DID for Loans",
+        description: "Activating your DID for loan NFT creation...",
+      });
+
+      const txHash = await applyDIDForLoans(userWallet.address, userWallet.seed);
+
+      toast({
+        title: "DID Applied Successfully",
+        description: "Your DID is now active for creating loan NFTs!",
+      });
+
+      setIsDIDAppliedForLoansState(true);
+      onDIDLoanStatusChange?.(true);
+      
+      // Refresh data
+      setTimeout(() => {
+        onTransactionUpdate?.();
+      }, 2000);
+
+    } catch (error) {
+      console.error('Failed to apply DID for loans:', error);
+      
+      let errorMessage = "Could not apply DID for loans. Please try again.";
+      
+      if (error instanceof Error) {
+        if (error.message.includes('No existing DID found')) {
+          errorMessage = "Please create a DID first before applying for loans.";
+        } else if (error.message.includes('rejected') || error.message.includes('denied')) {
+          errorMessage = "Transaction was rejected. Please try again and approve in Crossmark.";
+        } else if (error.message.includes('Crossmark wallet not found')) {
+          errorMessage = "Crossmark extension not detected. Please ensure it's installed and active.";
+        }
+      }
+
+      toast({
+        title: "Application Failed",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    } finally {
+      setIsApplyingDID(false);
     }
   };
 
@@ -470,114 +438,65 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 <form onSubmit={handleCreateDID} className="space-y-4">
                   <div className="text-center mb-4">
                     <User className="w-12 h-12 text-orange-600 mx-auto mb-2" />
-                    <p className="text-sm text-gray-600">Create your DID to enhance loan credibility</p>
+                    <p className="text-sm text-gray-600">
+                      {trustScore?.factors.hasDID 
+                        ? 'Update your DID information' 
+                        : 'Create your DID to enhance loan credibility'
+                      }
+                    </p>
                     {(!userWallet.seed || userWallet.seed.trim() === '') && (
                       <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded text-xs text-blue-800">
                         💡 You'll need to approve the transaction in Crossmark extension
                       </div>
                     )}
+                    {trustScore?.factors.hasDID && (
+                      <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-800">
+                        ℹ️ You already have a DID. This will update your existing information.
+                      </div>
+                    )}
                   </div>
 
-                  {/* Diagnostic Section for Crossmark users */}
-                  {(!userWallet.seed || userWallet.seed.trim() === '') && (
+                  {/* DID Actions */}
+                  {trustScore?.factors.hasDID && (
                     <div className="space-y-3">
                       <div className="flex items-center justify-between">
-                        <span className="text-sm font-medium text-gray-700">Having issues?</span>
+                        <span className="text-sm font-medium text-gray-700">DID Actions</span>
                         <div className="flex gap-2">
                           <Button 
                             type="button" 
                             variant="outline" 
                             size="sm" 
-                            onClick={testExistingTransaction}
-                            className="flex items-center gap-1"
+                            onClick={viewCurrentDID}
+                            className="flex items-center gap-1 bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100"
                           >
-                            <CheckCircle className="w-3 h-3" />
-                            Test Existing TX
+                            <User className="w-3 h-3" />
+                            View Current DID
                           </Button>
-                          <Button 
-                            type="button" 
-                            variant="outline" 
-                            size="sm" 
-                            onClick={testCrossmarkMethodsLocal}
-                            className="flex items-center gap-1"
-                          >
-                            <CheckCircle className="w-3 h-3" />
-                            Test Methods
-                          </Button>
-                          <Button 
-                            type="button" 
-                            variant="outline" 
-                            size="sm" 
-                            onClick={runDiagnostics}
-                            className="flex items-center gap-1"
-                          >
-                            <AlertCircle className="w-3 h-3" />
-                            Run Diagnostics
-                          </Button>
+                          
+                          {!isDIDAppliedForLoansState && (
+                            <Button 
+                              type="button" 
+                              variant="outline" 
+                              size="sm" 
+                              onClick={handleApplyDIDForLoans}
+                              disabled={isApplyingDID}
+                              className="flex items-center gap-1 bg-green-50 border-green-200 text-green-700 hover:bg-green-100"
+                            >
+                              <Shield className="w-3 h-3" />
+                              {isApplyingDID ? 'Applying...' : 'Apply for Loans'}
+                            </Button>
+                          )}
+                          
+                          {isDIDAppliedForLoansState && (
+                            <div className="flex items-center gap-1 px-2 py-1 bg-green-100 border border-green-300 rounded text-xs text-green-800">
+                              <CheckCircle className="w-3 h-3" />
+                              <span>Loan Ready</span>
+                            </div>
+                          )}
                         </div>
                       </div>
 
-                      {showDiagnostics && diagnostics && (
-                        <Card className={`border-l-4 ${diagnostics.canCreateDID ? 'border-l-green-500 bg-green-50' : 'border-l-red-500 bg-red-50'}`}>
-                          <CardContent className="pt-4">
-                            <div className="flex items-center gap-2 mb-3">
-                              {diagnostics.canCreateDID ? (
-                                <CheckCircle className="w-4 h-4 text-green-600" />
-                              ) : (
-                                <AlertCircle className="w-4 h-4 text-red-600" />
-                              )}
-                              <span className={`font-medium ${diagnostics.canCreateDID ? 'text-green-700' : 'text-red-700'}`}>
-                                {diagnostics.canCreateDID ? 'Ready to create DID' : 'Issues detected'}
-                              </span>
-                            </div>
-                            
-                            {diagnostics.issues.length > 0 && (
-                              <div className="mb-3">
-                                <h5 className="text-sm font-medium text-gray-700 mb-1">Issues:</h5>
-                                <ul className="text-xs space-y-1">
-                                  {diagnostics.issues.map((issue, index) => (
-                                    <li key={index} className="flex items-start gap-1">
-                                      <span className="text-red-500">•</span>
-                                      <span className="text-red-700">{issue}</span>
-                                    </li>
-                                  ))}
-                                </ul>
-                              </div>
-                            )}
-                            
-                            <div className="mb-3">
-                              <h5 className="text-sm font-medium text-gray-700 mb-1">Recommendations:</h5>
-                              <ul className="text-xs space-y-1">
-                                {diagnostics.recommendations.map((rec, index) => (
-                                  <li key={index} className="flex items-start gap-1">
-                                    <span className="text-blue-500">•</span>
-                                    <span className="text-blue-700">{rec}</span>
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
 
-                            {!diagnostics.canCreateDID && (
-                              <div className="pt-2 border-t border-gray-200">
-                                <Button 
-                                  type="button" 
-                                  variant="outline" 
-                                  size="sm" 
-                                  onClick={trySimplePaymentDID}
-                                  disabled={isCreatingDID}
-                                  className="w-full flex items-center gap-1"
-                                >
-                                  <User className="w-3 h-3" />
-                                  {isCreatingDID ? 'Creating...' : 'Try Fallback Method'}
-                                </Button>
-                                <p className="text-xs text-gray-500 mt-1 text-center">
-                                  Uses a simple payment transaction instead
-                                </p>
-                              </div>
-                            )}
-                          </CardContent>
-                        </Card>
-                      )}
                     </div>
                   )}
 
@@ -610,9 +529,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
                     {isCreatingDID ? (
                       <div className="flex items-center gap-2">
                         <Loader2 className="w-4 h-4 animate-spin" />
-                        Creating DID...
+                        {trustScore?.factors.hasDID ? 'Updating DID...' : 'Creating DID...'}
                       </div>
-                    ) : 'Create DID'}
+                    ) : (trustScore?.factors.hasDID ? 'Update DID' : 'Create DID')}
                   </Button>
                   
                   {isCreatingDID && (
@@ -741,6 +660,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
               <Star className="w-5 h-5" />
               Trust Score Analysis
             </CardTitle>
+
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -897,6 +817,57 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </div>
         </CardContent>
       </Card>
+
+      {/* Current DID Information Dialog */}
+      <Dialog open={showCurrentDID} onOpenChange={setShowCurrentDID}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Shield className="w-5 h-5 text-blue-600" />
+              Current DID Information
+            </DialogTitle>
+            <DialogDescription>
+              Your Decentralized Identity information stored on the XRPL
+            </DialogDescription>
+          </DialogHeader>
+          
+          {currentDIDData && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 gap-4">
+                <div className="p-4 bg-blue-50 rounded-lg border-l-4 border-blue-500">
+                  <Label className="text-sm font-medium text-blue-800">Full Name</Label>
+                  <p className="text-blue-900 font-semibold mt-1">{currentDIDData.name}</p>
+                </div>
+                
+                <div className="p-4 bg-green-50 rounded-lg border-l-4 border-green-500">
+                  <Label className="text-sm font-medium text-green-800">Phone Number</Label>
+                  <p className="text-green-900 font-semibold mt-1">{currentDIDData.phone}</p>
+                </div>
+                
+                <div className="p-4 bg-purple-50 rounded-lg border-l-4 border-purple-500">
+                  <Label className="text-sm font-medium text-purple-800">Created On</Label>
+                  <p className="text-purple-900 font-semibold mt-1">
+                    {new Date(currentDIDData.timestamp).toLocaleDateString('en-US', {
+                      year: 'numeric',
+                      month: 'long',
+                      day: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    })}
+                  </p>
+                </div>
+              </div>
+              
+              <div className="pt-4 border-t">
+                <div className="flex items-center gap-2 text-green-700">
+                  <CheckCircle className="w-4 h-4" />
+                  <span className="text-sm font-medium">Verified on XRPL Ledger</span>
+                </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };

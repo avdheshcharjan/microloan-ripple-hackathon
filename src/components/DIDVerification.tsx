@@ -6,7 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { Shield, CheckCircle, User } from 'lucide-react';
-import { createXRPLWallet, createDIDTransactionSmart, XRPLWallet } from '@/utils/xrplClient';
+import { createXRPLWallet, createDIDTransaction, XRPLWallet } from '@/utils/xrplClient';
 import { Wallet } from 'xrpl';
 
 interface DIDVerificationProps {
@@ -51,7 +51,7 @@ export const DIDVerification: React.FC<DIDVerificationProps> = ({ isVerified, on
       const wallet = Wallet.fromSeed(walletInfo.seed);
 
       // Create DID verification transaction using the created wallet info
-      const txHash = await createDIDTransactionSmart(walletInfo, verificationData);
+      const txHash = await createDIDTransaction(walletInfo, verificationData);
 
       toast({
         title: "DID Verification Complete",

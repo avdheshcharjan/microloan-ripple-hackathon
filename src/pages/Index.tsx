@@ -4,7 +4,7 @@ import { WelcomeSection } from '@/components/WelcomeSection';
 import { MainContent } from '@/components/MainContent';
 import { WalletSuccessPopup } from '@/components/WalletSuccessPopup';
 import { useToast } from '@/hooks/use-toast';
-import { XRPLWallet, fundLoanWithRLUSD, fundLoanWithXRP, getAccountTransactions, checkTrustLineExists, calculateTrustScore, TrustScore, getAccountBalances, AccountBalance } from '@/utils/xrplClient';
+import { XRPLWallet, fundLoanWithRLUSD, fundLoanWithXRP, getAccountTransactions, checkTrustLineExists, calculateTrustScore, TrustScore, getAccountBalances, AccountBalance, isDIDAppliedForLoans as checkDIDAppliedForLoans } from '@/utils/xrplClient';
 import { Wallet } from 'xrpl';
 import { XRPL_EXPLORER_URL } from '@/utils/constants';
 
@@ -18,6 +18,7 @@ const Index = () => {
   const [hasRLUSDTrustLine, setHasRLUSDTrustLine] = useState(false);
   const [userTrustScore, setUserTrustScore] = useState<TrustScore | null>(null);
   const [userBalances, setUserBalances] = useState<AccountBalance[]>([]);
+  const [isDIDAppliedForLoans, setIsDIDAppliedForLoans] = useState(false);
 
   const [userStats] = useState({
     totalLent: 0,
@@ -81,15 +82,28 @@ const Index = () => {
     }
   };
 
+  // Check if DID has been applied for loans
+  const checkDIDLoanApplicationStatus = async () => {
+    if (userWallet) {
+      try {
+        const isApplied = await checkDIDAppliedForLoans(userWallet.address);
+        setIsDIDAppliedForLoans(isApplied);
+      } catch (error) {
+        console.error('Failed to check DID loan application status:', error);
+      }
+    }
+  };
+
   useEffect(() => {
     fetchTransactions();
     checkRLUSDTrustLine();
     fetchUserTrustScore();
     fetchUserBalances();
+    checkDIDLoanApplicationStatus();
   }, [userWallet, didTransactionHash]); // Re-fetch when DID is created
 
   const handleWalletCreated = (walletInfo: XRPLWallet) => {
-    console.log('Wallet created:', walletInfo);
+    // Wallet created successfully
     setUserWallet(walletInfo);
     setShowWalletSuccessPopup(true);
     
@@ -98,7 +112,7 @@ const Index = () => {
   };
 
   const handleWalletConnected = (walletInfo: XRPLWallet) => {
-    console.log('Wallet connected:', walletInfo);
+    // Wallet connected successfully
     setUserWallet(walletInfo);
     // Skip success popup for existing wallet connections - go directly to dashboard
     
@@ -314,6 +328,7 @@ const Index = () => {
           hasRLUSDTrustLine={hasRLUSDTrustLine}
           onTrustLineCreated={handleTrustLineCreated}
           userBalances={userBalances}
+          isDIDAppliedForLoans={isDIDAppliedForLoans}
         />
       )}
       
