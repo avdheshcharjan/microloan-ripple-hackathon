@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -25,7 +24,7 @@ export const RLUSDTrustLine: React.FC<RLUSDTrustLineProps> = ({
       const exists = await checkTrustLineExists(
         userWallet.address, 
         'RLUSD', 
-        'rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De'
+        'rQhWct2fv4Vc4KRjRgMrxa8xPN9Zx9iLKV'
       );
       setHasTrustLine(exists);
     } catch (error) {

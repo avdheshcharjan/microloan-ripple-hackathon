@@ -444,6 +444,12 @@ const Index = () => {
 
     const borrowerAddress = loan.borrower === 'You' ? userWallet.address : loan.borrower;
 
+    console.log(`🔍 [Index] Loan funding details:`);
+    console.log(`🔍 [Index] Loan object:`, loan);
+    console.log(`🔍 [Index] loan.borrower: "${loan.borrower}"`);
+    console.log(`🔍 [Index] userWallet.address: "${userWallet.address}"`);
+    console.log(`🔍 [Index] Determined borrowerAddress: "${borrowerAddress}"`);
+
     try {
       // Show loading toast
       toast({
@@ -520,13 +526,19 @@ const Index = () => {
 
     } catch (error: any) {
       console.error('RLUSD funding failed:', error);
+      console.error('Error message:', error?.message);
+      console.error('Error type:', typeof error);
 
       // Handle specific error cases
-      if (error.message === 'MISSING_TRUSTLINE') {
+      if (error?.message === 'MISSING_TRUSTLINE' || error?.message?.includes('MISSING_TRUSTLINE')) {
+        console.log('🔄 MISSING_TRUSTLINE detected, offering XRP fallback...');
+        
         // Offer XRP fallback if borrower doesn't have RLUSD trustline
         const userConfirmed = window.confirm(
           `The borrower doesn't have an RLUSD trust line set up.\n\nWould you like to fund this loan with ${fundingAmount} XRP instead?`
         );
+
+        console.log('User confirmation for XRP fallback:', userConfirmed);
 
         if (userConfirmed) {
           try {
@@ -612,14 +624,90 @@ const Index = () => {
               variant: "destructive",
             });
           }
+        } else {
+          // User declined XRP fallback
+          toast({
+            title: "Funding Cancelled",
+            description: "The borrower needs to set up an RLUSD trust line to receive RLUSD payments.",
+            variant: "default",
+          });
         }
       } else {
         // Handle other RLUSD funding errors
-        toast({
-          title: "RLUSD Funding Failed",
-          description: "There was an error processing the RLUSD payment. Please try again.",
-          variant: "destructive",
-        });
+        console.log('🔄 Non-trustline error, showing generic error message');
+        
+        // Check if transaction actually succeeded but hash retrieval failed
+        if (error?.message?.includes('Transaction likely succeeded but hash could not be retrieved')) {
+          console.log('🎉 Transaction succeeded but hash not available, treating as success');
+          
+          try {
+            // Update loan funding in database with placeholder hash
+            const placeholderHash = 'TRANSACTION_SUCCEEDED_BUT_HASH_UNKNOWN';
+            const newFundedAmount = Math.min(loan.fundedAmount + fundingAmount, loan.amount);
+            await updateLoanFunding(loanId, newFundedAmount, placeholderHash);
+
+            // Show success toast
+            toast({
+              title: "RLUSD Funding Successful! 🎉",
+              description: `Successfully funded ${fundingAmount} RLUSD! Transaction completed (check your transaction history for details).`,
+            });
+
+            // Refresh loans to reflect new funding status
+            const filters: LoanFilters = {
+              status: loanFilters.status,
+              riskScore: loanFilters.riskScore,
+              minAmount: loanFilters.minAmount,
+              maxAmount: loanFilters.maxAmount,
+              orderBy: {
+                column: loanSort.column || 'created_at',
+                ascending: loanSort.ascending
+              }
+            };
+
+            const dbLoans = await fetchAllLoans(filters);
+
+            // Transform DB loans to UI format
+            const uiLoans = dbLoans.map(loan => ({
+              id: loan.id,
+              borrower: loan.borrower_address === userWallet.address ? 'You' : loan.borrower_address,
+              amount: loan.amount,
+              purpose: loan.purpose,
+              interestRate: loan.interest_rate,
+              duration: loan.duration,
+              fundedAmount: loan.funded_amount,
+              status: loan.status,
+              didVerified: loan.did_verified,
+              riskScore: loan.risk_score,
+              createdAt: loan.created_at,
+              nftId: loan.nft_id,
+              txHash: loan.tx_hash
+            }));
+
+            setLoans(uiLoans);
+
+            // Refresh user data after successful funding
+            setTimeout(() => {
+              fetchTransactions();
+              fetchUserTrustScore();
+              fetchUserBalances();
+            }, 2000);
+            
+          } catch (updateError) {
+            console.error('Failed to update loan after successful transaction:', updateError);
+            toast({
+              title: "Update Failed",
+              description: "Transaction succeeded but failed to update loan status. Please refresh the page.",
+              variant: "destructive",
+            });
+          }
+        } else {
+          // Handle actual errors
+          toast({
+            title: "RLUSD Funding Failed",
+            description: `Error: ${error?.message || 'There was an error processing the RLUSD payment. Please try again.'}`,
+            variant: "destructive",
+          });
+        }
       }
     }
   };

@@ -35,6 +35,9 @@ export interface AccountBalance {
 // RLUSD issuer address on testnet
 const RLUSD_ISSUER = 'rQhWct2fv4Vc4KRjRgMrxa8xPN9Zx9iLKV';
 
+// Convert RLUSD to proper hex format for XRPL transactions
+const RLUSD_HEX = '524C555344000000000000000000000000000000'; // 'RLUSD' padded to 40 hex chars
+
 // Browser-compatible hex encoding function
 const stringToHex = (str: string): string => {
   const encoder = new TextEncoder();
@@ -109,7 +112,7 @@ export const createRLUSDTrustLine = async (wallet: Wallet): Promise<string> => {
     TransactionType: 'TrustSet',
     Account: wallet.address,
     LimitAmount: {
-      currency: 'RLUSD',
+      currency: RLUSD_HEX, // Use hex-encoded currency
       issuer: RLUSD_ISSUER,
       value: '1000000' // 1 million RLUSD limit
     }
@@ -124,6 +127,9 @@ export const checkTrustLineExists = async (address: string, currency: string, is
   await connectXRPL();
 
   try {
+    console.log(`🔍 [Trust Line Check] Checking for ${currency} trust line on address: ${address}`);
+    console.log(`🔍 [Trust Line Check] Looking for issuer: ${issuer}`);
+    
     const response = await client.request({
       command: 'account_lines',
       account: address,
@@ -131,9 +137,58 @@ export const checkTrustLineExists = async (address: string, currency: string, is
     });
 
     const lines = response.result.lines || [];
-    return lines.some((line: any) =>
-      line.currency === currency && line.account === issuer
-    );
+    console.log(`🔍 [Trust Line Check] Found ${lines.length} trust lines:`, lines);
+    
+    // Check each line for debugging
+    lines.forEach((line: any, index: number) => {
+      // Decode hex currency codes to readable names
+      let decodedCurrency = line.currency;
+      if (line.currency.length > 3 && line.currency.match(/^[0-9A-F]+$/i)) {
+        const decoded = hexToString(line.currency);
+        // Remove null bytes and check if it's a valid readable string
+        const cleanDecoded = decoded.replace(/\0/g, '').trim();
+        if (cleanDecoded && cleanDecoded.match(/^[A-Za-z0-9]+$/)) {
+          decodedCurrency = cleanDecoded;
+        }
+      }
+      
+      console.log(`🔍 [Trust Line Check] Line ${index + 1}:`, {
+        currency: line.currency,
+        decodedCurrency: decodedCurrency,
+        account: line.account,
+        balance: line.balance
+      });
+    });
+    
+    const hasLine = lines.some((line: any) => {
+      // Decode hex currency codes to readable names for comparison
+      let lineCurrency = line.currency;
+      if (line.currency.length > 3 && line.currency.match(/^[0-9A-F]+$/i)) {
+        const decoded = hexToString(line.currency);
+        // Remove null bytes and check if it's a valid readable string
+        const cleanDecoded = decoded.replace(/\0/g, '').trim();
+        if (cleanDecoded && cleanDecoded.match(/^[A-Za-z0-9]+$/)) {
+          lineCurrency = cleanDecoded;
+        }
+      }
+      
+      const currencyMatch = lineCurrency === currency;
+      const issuerMatch = line.account === issuer;
+      
+      console.log(`🔍 [Trust Line Check] Comparing line:`, {
+        lineCurrency,
+        targetCurrency: currency,
+        currencyMatch,
+        lineIssuer: line.account,
+        targetIssuer: issuer,
+        issuerMatch
+      });
+      
+      return currencyMatch && issuerMatch;
+    });
+    
+    console.log(`🔍 [Trust Line Check] Result: ${hasLine ? 'FOUND' : 'NOT FOUND'}`);
+    return hasLine;
   } catch (error) {
     console.error('Could not check trust line:', error);
     return false;
@@ -300,7 +355,7 @@ export const sendRLUSDPayment = async (
     Account: senderWallet.address,
     Destination: destinationAddress,
     Amount: {
-      currency: 'RLUSD',
+      currency: RLUSD_HEX, // Use hex-encoded currency
       issuer: RLUSD_ISSUER,
       value: amount.toString()
     },
@@ -831,7 +886,7 @@ export const fundLoanWithRLUSD = async (
     Account: funderWallet.address,
     Destination: borrowerAddress,
     Amount: {
-      currency: 'RLUSD',
+      currency: RLUSD_HEX, // Use hex-encoded currency
       issuer: RLUSD_ISSUER,
       value: amount.toString()
     },
@@ -860,12 +915,23 @@ export const fundLoanWithRLUSDUniversal = async (
 ): Promise<string> => {
   await connectXRPL();
 
+  console.log(`🔍 [RLUSD Funding] Starting funding process:`);
+  console.log(`🔍 [RLUSD Funding] Funder address: ${walletInfo.address}`);
+  console.log(`🔍 [RLUSD Funding] Borrower address: ${borrowerAddress}`);
+  console.log(`🔍 [RLUSD Funding] Amount: ${amount}`);
+  console.log(`🔍 [RLUSD Funding] Loan NFT ID: ${loanNFTId}`);
+
   // Check if borrower has RLUSD trust line
+  console.log(`🔍 [RLUSD Funding] Checking if borrower has RLUSD trust line...`);
   const hasTrustLine = await checkTrustLineExists(borrowerAddress, 'RLUSD', RLUSD_ISSUER);
+  console.log(`🔍 [RLUSD Funding] Trust line check result: ${hasTrustLine}`);
 
   if (!hasTrustLine) {
+    console.log(`❌ [RLUSD Funding] No RLUSD trust line found for borrower: ${borrowerAddress}`);
     throw new Error('MISSING_TRUSTLINE');
   }
+
+  console.log(`✅ [RLUSD Funding] Trust line found, proceeding with payment...`);
 
   // Create payment transaction
   const payment: Payment = {
@@ -873,7 +939,7 @@ export const fundLoanWithRLUSDUniversal = async (
     Account: walletInfo.address,
     Destination: borrowerAddress,
     Amount: {
-      currency: 'RLUSD',
+      currency: RLUSD_HEX, // Use hex-encoded currency
       issuer: RLUSD_ISSUER,
       value: amount.toString()
     },
