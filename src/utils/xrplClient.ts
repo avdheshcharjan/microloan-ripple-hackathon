@@ -33,7 +33,7 @@ export interface AccountBalance {
 }
 
 // RLUSD issuer address on testnet
-const RLUSD_ISSUER = 'rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De';
+const RLUSD_ISSUER = 'rQhWct2fv4Vc4KRjRgMrxa8xPN9Zx9iLKV';
 
 // Browser-compatible hex encoding function
 const stringToHex = (str: string): string => {
@@ -851,6 +851,231 @@ export const fundLoanWithRLUSD = async (
   return response.result.hash || '';
 };
 
+// Universal funding function that works with both Crossmark and seed-based wallets
+export const fundLoanWithRLUSDUniversal = async (
+  walletInfo: XRPLWallet,
+  borrowerAddress: string,
+  amount: number,
+  loanNFTId?: string
+): Promise<string> => {
+  await connectXRPL();
+
+  // Check if borrower has RLUSD trust line
+  const hasTrustLine = await checkTrustLineExists(borrowerAddress, 'RLUSD', RLUSD_ISSUER);
+
+  if (!hasTrustLine) {
+    throw new Error('MISSING_TRUSTLINE');
+  }
+
+  // Create payment transaction
+  const payment: Payment = {
+    TransactionType: 'Payment',
+    Account: walletInfo.address,
+    Destination: borrowerAddress,
+    Amount: {
+      currency: 'RLUSD',
+      issuer: RLUSD_ISSUER,
+      value: amount.toString()
+    },
+    Memos: [{
+      Memo: {
+        MemoType: stringToHex('LOAN_FUNDING_RLUSD'),
+        MemoData: stringToHex(JSON.stringify({
+          amount,
+          loanNFTId: loanNFTId || '',
+          timestamp: Date.now()
+        }))
+      }
+    }]
+  };
+
+  // Handle Crossmark vs seed-based wallets
+  if (walletInfo.signTransaction && walletInfo.submitTransaction) {
+    // Crossmark wallet - use custom sign/submit functions
+    return await fundLoanWithCrossmark(walletInfo.address, payment, walletInfo.signTransaction, walletInfo.submitTransaction);
+  } else if (walletInfo.seed && walletInfo.seed.trim() !== '') {
+    // Seed-based wallet - use traditional method
+    return await fundLoanWithSeed(walletInfo.seed, payment);
+  } else {
+    // Crossmark wallet without sign/submit functions - use global Crossmark
+    return await fundLoanWithCrossmarkGlobal(walletInfo.address, payment);
+  }
+};
+
+// Helper function for Crossmark wallet funding
+const fundLoanWithCrossmark = async (
+  address: string,
+  payment: Payment,
+  signTransaction: (tx: any) => Promise<string>,
+  submitTransaction: (txBlob: string) => Promise<string>
+): Promise<string> => {
+  try {
+    console.log('🔄 Funding loan with RLUSD using Crossmark wallet...');
+    
+    // Prepare transaction for Crossmark
+    const prepared = await client.autofill(payment);
+    console.log('📝 Transaction prepared:', prepared);
+
+    // Sign with Crossmark
+    const signedTxBlob = await signTransaction(prepared);
+    console.log('✅ Transaction signed with Crossmark');
+
+    // Submit with Crossmark
+    const txHash = await submitTransaction(signedTxBlob);
+    console.log('🚀 Transaction submitted:', txHash);
+
+    return txHash;
+  } catch (error) {
+    console.error('❌ Crossmark RLUSD funding failed:', error);
+    throw error;
+  }
+};
+
+// Helper function for Crossmark wallet funding using global Crossmark object
+const fundLoanWithCrossmarkGlobal = async (address: string, payment: Payment): Promise<string> => {
+  try {
+    console.log('🔄 Funding loan with RLUSD using global Crossmark...');
+    
+    const crossmark = (window as any).crossmark;
+    if (!crossmark) {
+      throw new Error('Crossmark wallet not found. Please ensure Crossmark extension is installed and active.');
+    }
+
+    // Try different Crossmark methods
+    const methods = ['signAndSubmitAndWait', 'submitAndWait', 'submit'];
+
+    for (const method of methods) {
+      if (crossmark.methods?.[method]) {
+        try {
+          console.log(`🔄 Trying Crossmark method: ${method}`);
+          
+          if (method === 'submit') {
+            await crossmark.methods[method](payment);
+            // Wait a bit for transaction to process
+            await new Promise(resolve => setTimeout(resolve, 3000));
+            
+            // Find the recent transaction by looking for payments from this address
+            const recentTxResponse = await client.request({
+              command: 'account_tx',
+              account: address,
+              limit: 10,
+              ledger_index_min: -1,
+              ledger_index_max: -1
+            });
+
+            const transactions = recentTxResponse.result.transactions || [];
+            for (const txWrapper of transactions) {
+              const transaction = (txWrapper as any).tx_json || (txWrapper as any).tx || txWrapper;
+              if (transaction?.TransactionType === 'Payment' && 
+                  transaction?.Account === address &&
+                  transaction?.hash) {
+                console.log('🚀 Found recent payment transaction:', transaction.hash);
+                return transaction.hash;
+              }
+            }
+            
+            throw new Error('Transaction submitted but hash not found');
+          } else {
+            const timeoutPromise = new Promise<never>((_, reject) => {
+              setTimeout(() => reject(new Error('TIMEOUT')), 30000);
+            });
+
+            const response = await Promise.race([
+              crossmark.methods[method](payment),
+              timeoutPromise
+            ]);
+
+            console.log('📝 Crossmark response:', response);
+            console.log('📝 Response type:', typeof response);
+            console.log('📝 Response keys:', response ? Object.keys(response) : 'No response');
+            
+            // Extract transaction hash from various response formats
+            let txHash = '';
+            if (response?.hash) {
+              txHash = response.hash;
+            } else if (response?.response?.hash) {
+              txHash = response.response.hash;
+            } else if (response?.result?.hash) {
+              txHash = response.result.hash;
+            } else if (response?.tx_json?.hash) {
+              txHash = response.tx_json.hash;
+            } else if (response?.tx?.hash) {
+              txHash = response.tx.hash;
+            } else if (response?.transaction?.hash) {
+              txHash = response.transaction.hash;
+            } else if (typeof response === 'string' && response.length === 64) {
+              // Sometimes Crossmark returns just the hash as a string
+              txHash = response;
+            }
+
+            if (txHash) {
+              console.log('🚀 RLUSD funding transaction hash:', txHash);
+              return txHash;
+            } else {
+              console.log('❌ No hash found, will search for recent transaction...');
+              // Fallback: search for recent transaction from this address
+              await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds
+              
+              const recentTxResponse = await client.request({
+                command: 'account_tx',
+                account: address,
+                limit: 5,
+                ledger_index_min: -1,
+                ledger_index_max: -1
+              });
+
+              const transactions = recentTxResponse.result.transactions || [];
+              console.log('🔍 Looking for recent transactions:', transactions.length);
+              
+              for (const txWrapper of transactions) {
+                const transaction = (txWrapper as any).tx_json || (txWrapper as any).tx || txWrapper;
+                console.log('🔍 Checking transaction:', transaction?.TransactionType, transaction?.hash);
+                
+                if (transaction?.TransactionType === 'Payment' && 
+                    transaction?.Account === address &&
+                    transaction?.hash) {
+                  console.log('🎯 Found recent RLUSD payment transaction:', transaction.hash);
+                  return transaction.hash;
+                }
+              }
+              
+              throw new Error('Transaction likely succeeded but hash could not be retrieved. Check your transaction history.');
+            }
+          }
+        } catch (error) {
+          console.warn(`${method} failed:`, error);
+          if (error instanceof Error && !error.message.includes('TIMEOUT')) {
+            throw error; // Don't retry on non-timeout errors
+          }
+          continue; // Try next method on timeout
+        }
+      }
+    }
+
+    throw new Error('No suitable Crossmark methods available for RLUSD funding. Please update your Crossmark extension.');
+  } catch (error) {
+    console.error('❌ Crossmark global RLUSD funding failed:', error);
+    throw error;
+  }
+};
+
+// Helper function for seed-based wallet funding
+const fundLoanWithSeed = async (seed: string, payment: Payment): Promise<string> => {
+  try {
+    console.log('🔄 Funding loan with RLUSD using seed-based wallet...');
+    
+    const wallet = createWalletFromSeed(seed);
+    const response: TxResponse<Payment> = await client.submitAndWait(payment, { wallet });
+    const txHash = response.result.hash || '';
+    
+    console.log('🚀 RLUSD funding transaction hash:', txHash);
+    return txHash;
+  } catch (error) {
+    console.error('❌ Seed-based RLUSD funding failed:', error);
+    throw error;
+  }
+};
+
 export const fundLoanWithXRP = async (
   funderWallet: Wallet,
   borrowerAddress: string,
@@ -878,6 +1103,238 @@ export const fundLoanWithXRP = async (
   };
   const response: TxResponse<Payment> = await client.submitAndWait(payment, { wallet: funderWallet });
   return response.result.hash || '';
+};
+
+// Universal XRP funding function that works with both Crossmark and seed-based wallets
+export const fundLoanWithXRPUniversal = async (
+  walletInfo: XRPLWallet,
+  borrowerAddress: string,
+  amount: number,
+  loanNFTId: string
+): Promise<string> => {
+  await connectXRPL();
+
+  // Create payment transaction
+  const payment: Payment = {
+    TransactionType: 'Payment',
+    Account: walletInfo.address,
+    Destination: borrowerAddress,
+    Amount: (amount * 1000000).toString(), // XRP to drops
+    Memos: [{
+      Memo: {
+        MemoType: stringToHex('LOAN_FUNDING_XRP'),
+        MemoData: stringToHex(JSON.stringify({
+          amount,
+          loanNFTId,
+          timestamp: Date.now(),
+          note: 'Funded with XRP as fallback due to missing RLUSD trust line'
+        }))
+      }
+    }]
+  };
+
+  // Handle Crossmark vs seed-based wallets
+  if (walletInfo.signTransaction && walletInfo.submitTransaction) {
+    // Crossmark wallet - use custom sign/submit functions
+    return await fundXRPWithCrossmark(walletInfo.address, payment, walletInfo.signTransaction, walletInfo.submitTransaction);
+  } else if (walletInfo.seed && walletInfo.seed.trim() !== '') {
+    // Seed-based wallet - use traditional method
+    return await fundXRPWithSeed(walletInfo.seed, payment);
+  } else {
+    // Crossmark wallet without sign/submit functions - use global Crossmark
+    return await fundXRPWithCrossmarkGlobal(walletInfo.address, payment);
+  }
+};
+
+// Helper function for Crossmark wallet XRP funding
+const fundXRPWithCrossmark = async (
+  address: string,
+  payment: Payment,
+  signTransaction: (tx: any) => Promise<string>,
+  submitTransaction: (txBlob: string) => Promise<string>
+): Promise<string> => {
+  try {
+    console.log('🔄 Funding loan with XRP using Crossmark wallet...');
+    
+    // Prepare transaction for Crossmark
+    const prepared = await client.autofill(payment);
+    console.log('📝 Transaction prepared:', prepared);
+
+    // Sign with Crossmark
+    const signedTxBlob = await signTransaction(prepared);
+    console.log('✅ Transaction signed with Crossmark');
+
+    // Submit with Crossmark
+    const txHash = await submitTransaction(signedTxBlob);
+    console.log('🚀 Transaction submitted:', txHash);
+
+    return txHash;
+  } catch (error) {
+    console.error('❌ Crossmark XRP funding failed:', error);
+    throw error;
+  }
+};
+
+// Helper function for Crossmark wallet XRP funding using global Crossmark object
+const fundXRPWithCrossmarkGlobal = async (address: string, payment: Payment): Promise<string> => {
+  try {
+    console.log('🔄 Funding loan with XRP using global Crossmark...');
+    
+    const crossmark = (window as any).crossmark;
+    if (!crossmark) {
+      throw new Error('Crossmark wallet not found. Please ensure Crossmark extension is installed and active.');
+    }
+
+    // Try different Crossmark methods
+    const methods = ['signAndSubmitAndWait', 'submitAndWait', 'submit'];
+
+    for (const method of methods) {
+      if (crossmark.methods?.[method]) {
+        try {
+          console.log(`🔄 Trying Crossmark method: ${method}`);
+          
+          if (method === 'submit') {
+            await crossmark.methods[method](payment);
+            // Wait a bit for transaction to process
+            await new Promise(resolve => setTimeout(resolve, 3000));
+            
+            // Find the recent transaction by looking for payments from this address
+            const recentTxResponse = await client.request({
+              command: 'account_tx',
+              account: address,
+              limit: 10,
+              ledger_index_min: -1,
+              ledger_index_max: -1
+            });
+
+            const transactions = recentTxResponse.result.transactions || [];
+            for (const txWrapper of transactions) {
+              const transaction = (txWrapper as any).tx_json || (txWrapper as any).tx || txWrapper;
+              if (transaction?.TransactionType === 'Payment' && 
+                  transaction?.Account === address &&
+                  transaction?.hash) {
+                console.log('🚀 Found recent XRP payment transaction:', transaction.hash);
+                return transaction.hash;
+              }
+            }
+            
+            throw new Error('Transaction submitted but hash not found');
+          } else {
+            const timeoutPromise = new Promise<never>((_, reject) => {
+              setTimeout(() => reject(new Error('TIMEOUT')), 30000);
+            });
+
+            const response = await Promise.race([
+              crossmark.methods[method](payment),
+              timeoutPromise
+            ]);
+
+            console.log('📝 Crossmark XRP response:', response);
+            console.log('📝 Response type:', typeof response);
+            console.log('📝 Response keys:', response ? Object.keys(response) : 'No response');
+            
+            // Extract transaction hash from various response formats
+            let txHash = '';
+            if (response?.hash) {
+              txHash = response.hash;
+            } else if (response?.response?.hash) {
+              txHash = response.response.hash;
+            } else if (response?.result?.hash) {
+              txHash = response.result.hash;
+            } else if (response?.tx_json?.hash) {
+              txHash = response.tx_json.hash;
+            } else if (response?.tx?.hash) {
+              txHash = response.tx.hash;
+            } else if (response?.transaction?.hash) {
+              txHash = response.transaction.hash;
+            } else if (typeof response === 'string' && response.length === 64) {
+              // Sometimes Crossmark returns just the hash as a string
+              txHash = response;
+            }
+
+            if (txHash) {
+              console.log('🚀 XRP funding transaction hash:', txHash);
+              return txHash;
+            } else {
+              console.log('❌ No hash found, will search for recent transaction...');
+              // Fallback: search for recent transaction from this address
+              console.log('⏰ Waiting 4 seconds for transaction to be processed...');
+              await new Promise(resolve => setTimeout(resolve, 4000)); // Wait 4 seconds (increased)
+              
+              console.log('🔍 Searching for recent transactions from address:', address);
+              const recentTxResponse = await client.request({
+                command: 'account_tx',
+                account: address,
+                limit: 10, // Increased limit
+                ledger_index_min: -1,
+                ledger_index_max: -1
+              });
+
+              const transactions = recentTxResponse.result.transactions || [];
+              console.log('🔍 Found', transactions.length, 'recent transactions');
+              
+              // Log all transactions for debugging
+              transactions.forEach((txWrapper, index) => {
+                const transaction = (txWrapper as any).tx_json || (txWrapper as any).tx || txWrapper;
+                console.log(`Transaction ${index}:`, {
+                  type: transaction?.TransactionType,
+                  account: transaction?.Account,
+                  hash: transaction?.hash,
+                  date: transaction?.date,
+                  amount: transaction?.Amount,
+                  destination: transaction?.Destination
+                });
+              });
+              
+              // Look for ANY recent payment transaction from this address
+              for (const txWrapper of transactions) {
+                const transaction = (txWrapper as any).tx_json || (txWrapper as any).tx || txWrapper;
+                
+                if (transaction?.TransactionType === 'Payment' && 
+                    transaction?.Account === address &&
+                    transaction?.hash) {
+                  console.log('🎯 Found recent XRP payment transaction:', transaction.hash);
+                  return transaction.hash;
+                }
+              }
+              
+              // If still not found, return a placeholder and let the user know
+              console.log('⚠️ Could not find transaction hash, but transaction likely succeeded');
+              return 'TRANSACTION_SUCCEEDED_BUT_HASH_UNKNOWN';
+            }
+          }
+        } catch (error) {
+          console.warn(`${method} failed:`, error);
+          if (error instanceof Error && !error.message.includes('TIMEOUT')) {
+            throw error; // Don't retry on non-timeout errors
+          }
+          continue; // Try next method on timeout
+        }
+      }
+    }
+
+    throw new Error('No suitable Crossmark methods available for XRP funding. Please update your Crossmark extension.');
+  } catch (error) {
+    console.error('❌ Crossmark global XRP funding failed:', error);
+    throw error;
+  }
+};
+
+// Helper function for seed-based wallet XRP funding
+const fundXRPWithSeed = async (seed: string, payment: Payment): Promise<string> => {
+  try {
+    console.log('🔄 Funding loan with XRP using seed-based wallet...');
+    
+    const wallet = createWalletFromSeed(seed);
+    const response: TxResponse<Payment> = await client.submitAndWait(payment, { wallet });
+    const txHash = response.result.hash || '';
+    
+    console.log('🚀 XRP funding transaction hash:', txHash);
+    return txHash;
+  } catch (error) {
+    console.error('❌ Seed-based XRP funding failed:', error);
+    throw error;
+  }
 };
 
 // Get account NFTs

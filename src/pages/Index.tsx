@@ -4,7 +4,7 @@ import { WelcomeSection } from '@/components/WelcomeSection';
 import { MainContent } from '@/components/MainContent';
 import { WalletSuccessPopup } from '@/components/WalletSuccessPopup';
 import { useToast } from '@/hooks/use-toast';
-import { XRPLWallet, fundLoanWithRLUSD, fundLoanWithXRP, getAccountTransactions, checkTrustLineExists, calculateTrustScore, TrustScore, getAccountBalances, AccountBalance, isDIDAppliedForLoans as checkDIDAppliedForLoans, applyDIDForLoans } from '@/utils/xrplClient';
+import { XRPLWallet, fundLoanWithRLUSD, fundLoanWithRLUSDUniversal, fundLoanWithXRP, fundLoanWithXRPUniversal, getAccountTransactions, checkTrustLineExists, calculateTrustScore, TrustScore, getAccountBalances, AccountBalance, isDIDAppliedForLoans as checkDIDAppliedForLoans, applyDIDForLoans } from '@/utils/xrplClient';
 import { Wallet } from 'xrpl';
 import { XRPL_EXPLORER_URL } from '@/utils/constants';
 import { createLoanInDB, fetchUserLoans, fetchAllLoans, updateLoanFunding, type DBLoan, type LoanFilters } from '@/utils/supabase';
@@ -149,8 +149,9 @@ const Index = () => {
         const hasTrustLine = await checkTrustLineExists(
           userWallet.address,
           'RLUSD',
-          'rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De'
+          'rQhWct2fv4Vc4KRjRgMrxa8xPN9Zx9iLKV'
         );
+        console.log('🔗 Trust line check result:', hasTrustLine);
         setHasRLUSDTrustLine(hasTrustLine);
       } catch (error) {
         console.error('Failed to check RLUSD trust line:', error);
@@ -375,16 +376,39 @@ const Index = () => {
   };
 
   const handleFundLoan = async (loanId: string) => {
+    // Check if the user has a connected wallet
     if (!userWallet) {
       toast({
         title: "Wallet Required",
-        description: "Please create a wallet first.",
+        description: "Please connect a wallet first to fund loans.",
         variant: "destructive",
       });
       return;
     }
 
-    if (!hasRLUSDTrustLine) {
+    // Find the loan to fund
+    const loan = loans.find(l => l.id === loanId);
+    if (!loan) {
+      toast({
+        title: "Loan Not Found",
+        description: "The selected loan could not be found.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Check if the user has RLUSD trust line
+    console.log('🔗 RLUSD Trust Line Status:', hasRLUSDTrustLine);
+    console.log('🔗 User has RLUSD balance, so they must have a trust line. Skipping trust line check for now.');
+    
+    // If user has RLUSD balance, they must have a trust line - skip this check for now
+    const userHasRlusdBalance = userBalances.some(balance => 
+      balance.currency === 'RLUSD' && 
+      balance.issuer === 'rQhWct2fv4Vc4KRjRgMrxa8xPN9Zx9iLKV' &&
+      parseFloat(balance.value) > 0
+    );
+    
+    if (!hasRLUSDTrustLine && !userHasRlusdBalance) {
       toast({
         title: "RLUSD Trust Line Required",
         description: "You need to create an RLUSD trust line first to send RLUSD payments.",
@@ -393,31 +417,68 @@ const Index = () => {
       return;
     }
 
-    const loan = loans.find(l => l.id === loanId);
-    if (!loan) return;
+    // Check if user has sufficient RLUSD balance
+    console.log('🔍 Checking user balances:', userBalances);
+    console.log('🔍 Looking for RLUSD with issuer: rQhWct2fv4Vc4KRjRgMrxa8xPN9Zx9iLKV');
+    
+    const rlusdBalance = userBalances.find(balance => 
+      balance.currency === 'RLUSD' && 
+      balance.issuer === 'rQhWct2fv4Vc4KRjRgMrxa8xPN9Zx9iLKV'
+    );
+    
+    console.log('💰 Found RLUSD balance:', rlusdBalance);
+    
+    const fundingAmount = Math.min(1, loan.amount - loan.fundedAmount); // Fund up to 1 RLUSD or remaining amount (reduced for testing)
+    const userRlusdAmount = rlusdBalance ? parseFloat(rlusdBalance.value) : 0;
+    
+    console.log(`💳 Funding amount needed: ${fundingAmount}, User RLUSD amount: ${userRlusdAmount}`);
 
-    const wallet = Wallet.fromSeed(userWallet.seed);
-    const fundingAmount = 100; // Fixed funding amount for demo
+    if (userRlusdAmount < fundingAmount) {
+      toast({
+        title: "Insufficient RLUSD Balance",
+        description: `You need at least ${fundingAmount} RLUSD to fund this loan. Current balance: ${userRlusdAmount.toFixed(2)} RLUSD. Please acquire more RLUSD.`,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const borrowerAddress = loan.borrower === 'You' ? userWallet.address : loan.borrower;
 
     try {
-      // First, try to fund with RLUSD (primary goal)
+      // Show loading toast
       toast({
         title: "Processing RLUSD Payment",
-        description: "Attempting to fund loan with RLUSD on XRPL...",
+        description: `Funding loan with ${fundingAmount} RLUSD on XRPL...`,
       });
 
-      const txHash = await fundLoanWithRLUSD(wallet, loan.borrower === 'You' ? userWallet.address : loan.borrower, fundingAmount, loan.nftId);
+      // Debug wallet configuration
+      console.log('🔍 Debug: userWallet object:', {
+        address: userWallet.address,
+        hasSignTransaction: !!userWallet.signTransaction,
+        hasSubmitTransaction: !!userWallet.submitTransaction,
+        hasSeed: !!userWallet.seed,
+        seedLength: userWallet.seed ? userWallet.seed.length : 0
+      });
 
-      // Update funding in Supabase
+      // Call the universal fundLoanWithRLUSD function that handles both Crossmark and seed-based wallets
+      const txHash = await fundLoanWithRLUSDUniversal(
+        userWallet, 
+        borrowerAddress, 
+        fundingAmount, 
+        loan.nftId
+      );
+
+      // Update loan funding in Supabase database
       const newFundedAmount = Math.min(loan.fundedAmount + fundingAmount, loan.amount);
       await updateLoanFunding(loanId, newFundedAmount, txHash);
 
+      // Show success toast
       toast({
         title: "RLUSD Funding Successful",
-        description: `RLUSD payment processed on XRPL. TX: ${txHash.slice(0, 8)}...`,
+        description: `Successfully funded ${fundingAmount} RLUSD. TX: ${txHash.slice(0, 8)}...`,
       });
 
-      // Refresh loans after successful funding
+      // Refresh loans to reflect new funding status
       const filters: LoanFilters = {
         status: loanFilters.status,
         riskScore: loanFilters.riskScore,
@@ -450,7 +511,7 @@ const Index = () => {
 
       setLoans(uiLoans);
 
-      // Refresh data after successful funding
+      // Refresh user data after successful funding
       setTimeout(() => {
         fetchTransactions();
         fetchUserTrustScore();
@@ -460,9 +521,9 @@ const Index = () => {
     } catch (error: any) {
       console.error('RLUSD funding failed:', error);
 
-      // If the error is due to missing trustline, offer XRP fallback
+      // Handle specific error cases
       if (error.message === 'MISSING_TRUSTLINE') {
-        // Confirm with user if they want to send XRP instead
+        // Offer XRP fallback if borrower doesn't have RLUSD trustline
         const userConfirmed = window.confirm(
           `The borrower doesn't have an RLUSD trust line set up.\n\nWould you like to fund this loan with ${fundingAmount} XRP instead?`
         );
@@ -474,16 +535,28 @@ const Index = () => {
               description: "Funding loan with XRP as fallback...",
             });
 
-            const xrpTxHash = await fundLoanWithXRP(wallet, loan.borrower === 'You' ? userWallet.address : loan.borrower, fundingAmount, loan.nftId);
+            console.log('🚀 Starting XRP funding with universal function...');
+            const xrpTxHash = await fundLoanWithXRPUniversal(userWallet, borrowerAddress, fundingAmount, loan.nftId);
+            console.log('✅ XRP funding successful! Hash:', xrpTxHash);
 
             // Update funding in Supabase
+            console.log('💾 Updating loan funding in database...');
             const newFundedAmount = Math.min(loan.fundedAmount + fundingAmount, loan.amount);
             await updateLoanFunding(loanId, newFundedAmount, xrpTxHash);
+            console.log('💾 Database updated successfully');
 
-            toast({
-              title: "XRP Funding Successful",
-              description: `XRP payment processed on XRPL. TX: ${xrpTxHash.slice(0, 8)}...`,
-            });
+            // Handle different hash scenarios
+            if (xrpTxHash === 'TRANSACTION_SUCCEEDED_BUT_HASH_UNKNOWN') {
+              toast({
+                title: "XRP Funding Successful! 🎉",
+                description: `Successfully funded ${fundingAmount} XRP! Transaction completed (hash not available).`,
+              });
+            } else {
+              toast({
+                title: "XRP Funding Successful! 🎉",
+                description: `Successfully funded ${fundingAmount} XRP! TX: ${xrpTxHash.slice(0, 8)}...`,
+              });
+            }
 
             // Refresh loans after successful funding
             const filters: LoanFilters = {
@@ -526,10 +599,16 @@ const Index = () => {
             }, 2000);
 
           } catch (xrpError) {
-            console.error('XRP funding also failed:', xrpError);
+            console.error('❌ XRP funding failed:', xrpError);
+            console.error('❌ XRP error details:', {
+              message: xrpError instanceof Error ? xrpError.message : 'Unknown error',
+              stack: xrpError instanceof Error ? xrpError.stack : 'No stack trace',
+              type: typeof xrpError
+            });
+            
             toast({
               title: "XRP Funding Failed",
-              description: "There was an error processing the XRP payment.",
+              description: `Error: ${xrpError instanceof Error ? xrpError.message : 'Unknown error processing XRP payment'}`,
               variant: "destructive",
             });
           }

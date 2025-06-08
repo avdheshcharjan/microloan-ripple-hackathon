@@ -124,11 +124,11 @@ export const LoanCard: React.FC<LoanCardProps> = ({ loan, onFund, isOwn = false,
 
   // Check if user has sufficient balance for funding
   const checkSufficientBalance = () => {
-    const fundingAmount = 100; // Fixed funding amount for demo
+    const fundingAmount = 1; // Fixed funding amount for demo (reduced for testing)
     
     // Check RLUSD balance first (priority)
     const rlusdBalance = userBalances.find(balance => 
-      balance.currency === 'RLUSD' && balance.issuer === 'rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De'
+      balance.currency === 'RLUSD' && balance.issuer === 'rQhWct2fv4Vc4KRjRgMrxa8xPN9Zx9iLKV'
     );
     
     if (rlusdBalance && parseFloat(rlusdBalance.value) >= fundingAmount) {
@@ -137,6 +137,7 @@ export const LoanCard: React.FC<LoanCardProps> = ({ loan, onFund, isOwn = false,
     
     // Check XRP balance as fallback
     const xrpBalance = userBalances.find(balance => balance.currency === 'XRP');
+    
     if (xrpBalance && parseFloat(xrpBalance.value) >= fundingAmount) {
       return { canFund: true, currency: 'XRP', balance: parseFloat(xrpBalance.value) };
     }
