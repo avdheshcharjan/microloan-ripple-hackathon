@@ -3,6 +3,11 @@
 A decentralized peer-to-peer microloan platform built on the XRP Ledger (XRPL) that enables users to create, fund, and manage microloans using blockchain technology. The application leverages XRPL's native features including NFTs, trust lines, and payments to create a transparent and secure lending ecosystem.
 ![photo_2025-06-08_11-54-20](https://github.com/user-attachments/assets/02b9afd8-19c6-4c05-b6be-9d9668fb535b)
 
+![photo_2025-06-08_11-55-00](https://github.com/user-attachments/assets/c362a1a0-0e97-42fa-95c2-f698f4253439)
+
+![photo_2025-06-08_11-55-17](https://github.com/user-attachments/assets/621fb402-04b8-43e6-a4f0-d0bedca469a7)
+
+link to video: https://drive.google.com/drive/folders/1-5Z0WFSXNfBPWI-AF9zh0hXWVCeFdqcw?usp=sharing
 
 ## Overview
 
