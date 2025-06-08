@@ -7,7 +7,10 @@ A decentralized peer-to-peer microloan platform built on the XRP Ledger (XRPL) t
 
 ![photo_2025-06-08_11-55-17](https://github.com/user-attachments/assets/621fb402-04b8-43e6-a4f0-d0bedca469a7)
 
-link to video: https://drive.google.com/drive/folders/1-5Z0WFSXNfBPWI-AF9zh0hXWVCeFdqcw?usp=sharing
+Our video here:
+https://github.com/user-attachments/assets/27cb753e-ad48-431d-9b2f-14d6840ed627
+
+
 
 ## Overview
 
