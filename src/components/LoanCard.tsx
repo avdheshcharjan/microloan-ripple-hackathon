@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -36,13 +35,40 @@ export const LoanCard: React.FC<LoanCardProps> = ({ loan, onFund, isOwn = false,
     const fetchTrustScore = async () => {
       try {
         setLoadingTrustScore(true);
+        // For own loans, calculate a base score using DID status
+        if (isOwn || loan.borrower === 'You') {
+          const baseScore = loan.didVerified ? 10 : 0; // DID verification gives 10 points
+          let risk: 'low' | 'medium' | 'high';
+          
+          // Determine risk level based on DID status
+          if (baseScore >= 10) {
+            risk = 'low';
+          } else if (baseScore >= 5) {
+            risk = 'medium';
+          } else {
+            risk = 'high';
+          }
+
+          setTrustScore({
+            score: baseScore,
+            risk: risk,
+            factors: {
+              hasDID: loan.didVerified,
+              transactionCount: 0
+            }
+          });
+          setLoadingTrustScore(false);
+          return;
+        }
+
         const score = await calculateTrustScore(loan.borrower);
         setTrustScore(score);
       } catch (error) {
         console.error('Failed to fetch trust score:', error);
-        // Fallback to the risk score from props
+        // Fallback to the risk score from props with DID consideration
+        const baseScore = loan.didVerified ? 10 : 0;
         setTrustScore({
-          score: 0,
+          score: baseScore,
           risk: loan.riskScore,
           factors: {
             hasDID: loan.didVerified,
@@ -55,7 +81,7 @@ export const LoanCard: React.FC<LoanCardProps> = ({ loan, onFund, isOwn = false,
     };
 
     fetchTrustScore();
-  }, [loan.borrower, loan.riskScore, loan.didVerified]);
+  }, [loan.borrower, loan.riskScore, loan.didVerified, isOwn]);
   
   const getRiskColor = (risk: string) => {
     switch (risk) {
